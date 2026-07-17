@@ -1,0 +1,24 @@
+# PitWall — AI Agent Rules
+
+## Context
+Full project plan lives at docs/pitwall-plan.md — read it before generating 
+any code. This is a hackathon MVP with a LOCKED scope. Do not deviate.
+
+## Hard Rules
+- Never add features from the "Do not build first" list in the plan 
+  (haptics, OLED, LLM coaching, multiple tracks, AI ghosts) without explicit approval.
+- Follow the folder structure in section 18 of the plan exactly.
+- Use the data model in section 19 exactly (field names, types) unless I approve a change.
+- Config values (thresholds, corner definitions) go in config/*.yaml, never hardcoded.
+- Coaching output uses only the fixed templates in section 12. No free-form LLM text.
+- Rule-based metrics engine must work independently of Edge Impulse at all times.
+- Follow current F1 25 UDP telemetry spec (v3 PDF from EA forums) — do not assume 
+  field layout from older F1 game years.
+- Follow current Arduino UNO Q Bridge API (arduino.app_utils, Bridge.call/provide) — 
+  do not use deprecated Bridge Tool syntax from older Arduino boards.
+
+## Workflow
+- Small, testable commits. One exit criterion per commit where possible.
+- Ask me before introducing a new external Python package.
+- If something in docs/pitwall-plan.md conflicts with current official docs 
+  (Arduino, Edge Impulse, EA), flag it — don't silently pick one.
