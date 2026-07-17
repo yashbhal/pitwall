@@ -1,0 +1,7 @@
+track: "Monza"
+corners:
+  - corner_id: "T1"
+    name: "Turn 1 - Rettifilo"
+    lap_distance_range_m:
+      start: 0
+      end: 600

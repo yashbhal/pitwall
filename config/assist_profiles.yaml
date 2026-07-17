@@ -1,0 +1,16 @@
+assist_options:
+  gearbox:
+    - Automatic
+    - Manual with Suggested Gear
+    - Manual
+  abs:
+    - On
+    - Off
+  traction_control:
+    - Full
+    - Medium
+    - Off
+  racing_line:
+    - Full
+    - Corners only
+    - Off

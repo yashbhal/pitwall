@@ -1,0 +1,8 @@
+brake_onset_threshold: 0.10
+minimum_brake_duration_ms: 150
+brake_reapplication_gap_ms: 150
+brake_reapplication_window_ms: 2000
+rpm_limiter_margin_rpm: 300
+rpm_limiter_dwell_ms: 300
+minimum_valid_attempts_for_drill: 5
+brake_variation_warning_meters: 15
