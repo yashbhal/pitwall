@@ -116,8 +116,20 @@ def extract_turn1_samples(csv_path: str) -> dict[int, list[dict]]:
             if abs(frame - last_lap_frame) > STALE_FRAME_THRESHOLD:
                 stale_excluded += 1
                 continue
+
+            try:
+                speed = float(row.get("speed") or 0)
+            except ValueError:
+                speed = 0.0
+
+            # Drop idle/stationary rows regardless of zone match
+            if speed == 0.0:
+                continue
+
             if is_in_turn1(last_lap_distance) and last_lap_num is not None:
-                samples_by_lap.setdefault(last_lap_num, []).append(row)
+                annotated = dict(row)
+                annotated["lap_distance"] = last_lap_distance
+                samples_by_lap.setdefault(last_lap_num, []).append(annotated)
 
     print(f"Excluded {stale_excluded} samples due to stale lap_distance")
 
@@ -125,17 +137,44 @@ def extract_turn1_samples(csv_path: str) -> dict[int, list[dict]]:
     for lap_num in sorted(samples_by_lap):
         lap_rows = samples_by_lap[lap_num]
         times: list[float] = []
+        speeds: list[float] = []
         for r in lap_rows:
             try:
                 t = float(r.get("session_time") or 0)
             except ValueError:
                 t = 0.0
             times.append(t)
+
+            try:
+                s = float(r.get("speed") or 0)
+            except ValueError:
+                s = 0.0
+            speeds.append(s)
+
         start_time = min(times) if times else 0.0
         end_time = max(times) if times else 0.0
+        min_speed = min(speeds) if speeds else 0.0
+        max_speed = max(speeds) if speeds else 0.0
+
+        idle_flag = " --- contains idle rows -- investigate" if min_speed == 0.0 else ""
         print(
             f"  lap {lap_num}: {len(lap_rows)} samples, "
-            f"t={start_time:.3f}s -> {end_time:.3f}s"
+            f"t={start_time:.3f}s -> {end_time:.3f}s, "
+            f"speed {min_speed:.1f} -> {max_speed:.1f}{idle_flag}"
         )
+
+    # --- Lap 2 trace -------------------------------------------------------
+    if 2 in samples_by_lap:
+        print("\nLap 2 session_time / lap_distance trace:")
+        for r in samples_by_lap[2]:
+            try:
+                t = float(r.get("session_time") or 0)
+            except ValueError:
+                t = 0.0
+            try:
+                lap_dist = float(r.get("lap_distance", 0.0))
+            except (ValueError, TypeError):
+                lap_dist = 0.0
+            print(f"  {t:.3f}s  {lap_dist:.2f}m")
 
     return samples_by_lap
