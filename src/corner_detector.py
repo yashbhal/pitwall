@@ -14,11 +14,11 @@ def is_in_turn1(lap_distance: float) -> bool:
 
 def extract_turn1_samples(csv_path: str) -> list[dict]:
     """
-    Read a session CSV, print a full TEL speed summary and separate
-    non-idle stints, then return telemetry rows (packet_id 6) whose
-    nearest preceding LAP row (packet_id 2) has a lap_distance inside
-    TURN_1_ZONE. LAP rows that are too old are treated as stale and
-    ignored, preventing idle/paused TEL rows from being misclassified.
+    Read a session CSV, print a TEL idle-row summary and non-idle stint
+    boundaries, then return telemetry rows (packet_id 6) whose nearest
+    preceding LAP row (packet_id 2) has a lap_distance inside TURN_1_ZONE.
+    LAP rows that are too old are treated as stale and ignored, preventing
+    idle/paused TEL rows from being misclassified.
     """
     STALE_FRAME_THRESHOLD = 5
     IDLE_ZERO_THRESHOLD = 20
@@ -27,8 +27,9 @@ def extract_turn1_samples(csv_path: str) -> list[dict]:
     with path.open("r", newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
 
-    # --- Full CSV TEL speed summary -------------------------------------
+    # --- TEL idle-row summary --------------------------------------------
     tel_points: list[tuple[float, float]] = []
+    idle_rows = 0
     for row in rows:
         if row.get("packet_id", "").strip() != "6":
             continue
@@ -42,7 +43,8 @@ def extract_turn1_samples(csv_path: str) -> list[dict]:
         except ValueError:
             session_time = 0.0
 
-        print(f"speed={speed:.0f}")
+        if speed == 0.0:
+            idle_rows += 1
         tel_points.append((session_time, speed))
 
     # --- Group TEL rows into non-idle stints ----------------------------
@@ -71,7 +73,8 @@ def extract_turn1_samples(csv_path: str) -> list[dict]:
     if current_start is not None and last_nonzero_time is not None:
         stints.append({"start": current_start, "end": last_nonzero_time})
 
-    print(f"\nFound {len(stints)} non-idle stint(s)")
+    print(f"\nTotal idle rows skipped: {idle_rows}")
+    print(f"Found {len(stints)} non-idle stint(s)")
     for i, stint in enumerate(stints, start=1):
         print(
             f"  stint {i}: start={stint['start']:.3f}s, end={stint['end']:.3f}s"
