@@ -1,0 +1,33 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+*.env
+
+# IDE / OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Generated session data (raw telemetry, processed features, saved sessions)
+data/raw/*.csv
+data/raw/*.json
+data/processed/*.csv
+data/processed/*.json
+data/sessions/*.csv
+data/sessions/*.json
+data/sessions/*.db
+
+# Edge Impulse build artifacts
+edge_impulse/build/
+edge_impulse/*.zip
