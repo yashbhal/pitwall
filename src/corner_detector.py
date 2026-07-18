@@ -123,7 +123,7 @@ def extract_turn1_samples(csv_path: str) -> dict[int, list[dict]]:
                 speed = 0.0
 
             # Drop idle/stationary rows regardless of zone match
-            if speed == 0.0:
+            if speed < 5.0:
                 continue
 
             if is_in_turn1(last_lap_distance) and last_lap_num is not None:
