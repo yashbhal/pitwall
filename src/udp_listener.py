@@ -13,6 +13,14 @@ def load_udp_port():
     raise ValueError("udp_port not found in config/network.yaml")
 
 
+def format_lap_time(ms: int) -> str:
+    minutes = ms // 60000
+    remainder = ms % 60000
+    seconds = remainder // 1000
+    millis = remainder % 1000
+    return f"{minutes}:{seconds:02d}.{millis:03d}"
+
+
 def main():
     port = load_udp_port()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -39,19 +47,18 @@ def main():
             print(
                 f"{summary} | LAP dist={lap['lapDistance']:.2f} "
                 f"lap={lap['currentLapNum']} pos={lap['carPosition']} "
-                f"last={lap['lastLapTimeInMS']} cur={lap['currentLapTimeInMS']}"
+                f"last={format_lap_time(lap['lastLapTimeInMS'])} "
+                f"cur={format_lap_time(lap['currentLapTimeInMS'])}"
             )
             session_logger.log_row(lap, None)
         elif header["packetId"] == 6:
             tel = parse_car_telemetry(data, header["playerCarIndex"])
             print(
-                f"{summary} | TEL speed={tel['speed']} "
+                f"{summary} | TEL speed={tel['speed']:.0f} "
                 f"throttle={tel['throttle']:.2f} brake={tel['brake']:.2f} "
                 f"steer={tel['steer']:.2f} gear={tel['gear']} rpm={tel['engineRPM']}"
             )
             session_logger.log_row(None, tel)
-        else:
-            print(summary)
 
 
 if __name__ == "__main__":
