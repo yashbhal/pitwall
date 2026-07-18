@@ -32,10 +32,24 @@ def parse_header(data: bytes):
 
 
 # F1 25 UDP spec v3 — LapData is 57 bytes per car.
+# Byte offsets from the spec C struct (little endian, packed):
+#   0-3   uint32  lastLapTimeInMS
+#   4-7   uint32  currentLapTimeInMS
+#   8-9   uint16  sector1TimeMSPart
+#   10    uint8   sector1TimeMinutesPart
+#   11-12 uint16  sector2TimeMSPart
+#   13    uint8   sector2TimeMinutesPart
+#   14-15 uint16  deltaToCarInFrontMSPart
+#   16    uint8   deltaToCarInFrontMinutesPart
+#   17-18 uint16  deltaToRaceLeaderMSPart
+#   19    uint8   deltaToRaceLeaderMinutesPart
+#   20-23 float   lapDistance
+#   24-27 float   totalDistance
+#   28-31 float   safetyCarDelta
+#   32    uint8   carPosition
+#   33    uint8   currentLapNum
 LAP_DATA_SIZE = 57
-# Offsets for the fields we need: lastLapTimeInMS=0, currentLapTimeInMS=4,
-# lapDistance=20, carPosition=32, currentLapNum=33.
-_LAP_DATA_FMT = "<IIHBBHBBHBBfffBB"
+_LAP_DATA_FMT = "<IIHBHBHBHBfffBB"
 _LAP_DATA_FIELDS = [
     "lastLapTimeInMS", "currentLapTimeInMS",
     "_sector1TimeMSPart", "_sector1TimeMinutesPart",

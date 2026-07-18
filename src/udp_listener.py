@@ -18,6 +18,7 @@ def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("0.0.0.0", port))
     print(f"Listening for F1 25 UDP telemetry on port {port}...")
+    _dumped_lap = False
 
     while True:
         data, addr = sock.recvfrom(2048)
@@ -32,6 +33,9 @@ def main():
 
         if header["packetId"] == 2:
             lap = parse_lap_data(data, header["playerCarIndex"])
+            if not _dumped_lap:
+                print(f"LAP HEX first 40 bytes: {data[29:69].hex()}")
+                _dumped_lap = True
             print(
                 f"{summary} | LAP dist={lap['lapDistance']:.2f} "
                 f"lap={lap['currentLapNum']} pos={lap['carPosition']} "
