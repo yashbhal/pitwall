@@ -6,11 +6,11 @@ from pathlib import Path
 
 def format_lap_time(ms):
     """Format milliseconds as M:SS.mmm (matches udp_listener.py)."""
-    if ms is None or ms == "":
+    if not ms or str(ms).strip() == "":
         return "--:--.---"
-    ms = int(float(ms))
-    minutes = ms // 60000
-    remainder = ms % 60000
+    total_ms = int(float(str(ms).strip()))
+    minutes = total_ms // 60000
+    remainder = total_ms % 60000
     seconds = remainder // 1000
     millis = remainder % 1000
     return f"{minutes}:{seconds:02d}.{millis:03d}"
@@ -58,15 +58,15 @@ def main():
     )
     parser.add_argument(
         "csv_path",
+        type=Path,
         help="Path to the CSV file to replay",
     )
     args = parser.parse_args()
 
-    path = Path(args.csv_path)
-    if not path.is_file():
-        raise SystemExit(f"File not found: {path}")
+    if not args.csv_path.is_file():
+        raise SystemExit(f"File not found: {args.csv_path}")
 
-    with open(path, newline="", encoding="utf-8") as f:
+    with open(args.csv_path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         prev_time = None
 
