@@ -1,9 +1,9 @@
 import csv
 from pathlib import Path
 
-# Placeholder window for Monza Turn 1 (Variante del Rettifilo) braking zone.
-# Calibrate against clean lap_distance values once real data is available.
-TURN_1_ZONE: tuple[float, float] = (500.0, 750.0)
+# Calibrated window for Monza Turn 1 (Variante del Rettifilo) braking zone
+# from real driving data: brake onset observed at lap_distance=813.38m.
+TURN_1_ZONE: tuple[float, float] = (700.0, 950.0)
 
 
 def is_in_turn1(lap_distance: float) -> bool:
