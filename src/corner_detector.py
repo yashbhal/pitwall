@@ -2,7 +2,9 @@ import csv
 from pathlib import Path
 
 
-def extract_corner_samples(csv_path: str, zone: tuple[float, float]) -> dict[int, list[dict]]:
+def extract_corner_samples(
+    csv_path: str, zone: tuple[float, float]
+) -> dict[int, list[list[dict]]]:
     """
     Read a session CSV, print a TEL idle-row summary and non-idle stint
     boundaries, then return telemetry rows (packet_id 6) grouped by lap
@@ -10,9 +12,15 @@ def extract_corner_samples(csv_path: str, zone: tuple[float, float]) -> dict[int
     lap_distance inside *zone*. LAP rows that are too old are treated
     as stale and ignored, preventing idle/paused TEL rows from being
     misclassified.
+
+    Within each lap, samples are further split into contiguous stints
+    based on session_time gaps larger than MAX_GAP_SECONDS. This handles
+    flashbacks/restarts where the same lap_num appears in multiple
+    non-contiguous windows.
     """
     STALE_FRAME_THRESHOLD = 5
     IDLE_ZERO_THRESHOLD = 20
+    MAX_GAP_SECONDS = 2.0
 
     path = Path(csv_path)
     with path.open("r", newline="", encoding="utf-8") as f:
@@ -124,48 +132,75 @@ def extract_corner_samples(csv_path: str, zone: tuple[float, float]) -> dict[int
 
     print(f"Excluded {stale_excluded} samples due to stale lap_distance")
 
-    print("\nCorner samples per lap:")
-    for lap_num in sorted(samples_by_lap):
-        lap_rows = samples_by_lap[lap_num]
-        times: list[float] = []
-        speeds: list[float] = []
-        for r in lap_rows:
-            try:
-                t = float(r.get("session_time") or 0)
-            except ValueError:
-                t = 0.0
-            times.append(t)
-
-            try:
-                s = float(r.get("speed") or 0)
-            except ValueError:
-                s = 0.0
-            speeds.append(s)
-
-        start_time = min(times) if times else 0.0
-        end_time = max(times) if times else 0.0
-        min_speed = min(speeds) if speeds else 0.0
-        max_speed = max(speeds) if speeds else 0.0
-
-        idle_flag = " --- contains idle rows -- investigate" if min_speed == 0.0 else ""
-        print(
-            f"  lap {lap_num}: {len(lap_rows)} samples, "
-            f"t={start_time:.3f}s -> {end_time:.3f}s, "
-            f"speed {min_speed:.1f} -> {max_speed:.1f}{idle_flag}"
+    # --- Split each lap into contiguous stints -----------------------------
+    for lap_num in samples_by_lap:
+        rows = sorted(
+            samples_by_lap[lap_num],
+            key=lambda r: float(r.get("session_time") or 0),
         )
+        stints_for_lap: list[list[dict]] = []
+        current_stint: list[dict] = []
+        for r in rows:
+            t = float(r.get("session_time") or 0)
+            if not current_stint:
+                current_stint.append(r)
+                continue
+            prev_t = float(current_stint[-1].get("session_time") or 0)
+            if t - prev_t > MAX_GAP_SECONDS:
+                stints_for_lap.append(current_stint)
+                current_stint = [r]
+            else:
+                current_stint.append(r)
+        if current_stint:
+            stints_for_lap.append(current_stint)
+        samples_by_lap[lap_num] = stints_for_lap
 
-    # --- Lap 2 trace -------------------------------------------------------
+    print("\nCorner samples per lap (split into stints):")
+    for lap_num in sorted(samples_by_lap):
+        stints = samples_by_lap[lap_num]
+        total = sum(len(s) for s in stints)
+        print(f"  lap {lap_num}: {len(stints)} stint(s), {total} samples")
+        for i, stint in enumerate(stints, start=1):
+            times: list[float] = []
+            speeds: list[float] = []
+            for r in stint:
+                try:
+                    t = float(r.get("session_time") or 0)
+                except ValueError:
+                    t = 0.0
+                times.append(t)
+
+                try:
+                    s = float(r.get("speed") or 0)
+                except ValueError:
+                    s = 0.0
+                speeds.append(s)
+
+            start_time = min(times) if times else 0.0
+            end_time = max(times) if times else 0.0
+            min_speed = min(speeds) if speeds else 0.0
+            max_speed = max(speeds) if speeds else 0.0
+
+            idle_flag = " --- contains idle rows -- investigate" if min_speed == 0.0 else ""
+            print(
+                f"    stint {i}: {len(stint)} samples, "
+                f"t={start_time:.3f}s -> {end_time:.3f}s, "
+                f"speed {min_speed:.1f} -> {max_speed:.1f}{idle_flag}"
+            )
+
+    # --- Lap 2 traces ------------------------------------------------------
     if 2 in samples_by_lap:
-        print("\nLap 2 session_time / lap_distance trace:")
-        for r in samples_by_lap[2]:
-            try:
-                t = float(r.get("session_time") or 0)
-            except ValueError:
-                t = 0.0
-            try:
-                lap_dist = float(r.get("lap_distance", 0.0))
-            except (ValueError, TypeError):
-                lap_dist = 0.0
-            print(f"  {t:.3f}s  {lap_dist:.2f}m")
+        for i, stint in enumerate(samples_by_lap[2], start=1):
+            print(f"\nLap 2 stint {i} session_time / lap_distance trace:")
+            for r in stint:
+                try:
+                    t = float(r.get("session_time") or 0)
+                except ValueError:
+                    t = 0.0
+                try:
+                    lap_dist = float(r.get("lap_distance", 0.0))
+                except (ValueError, TypeError):
+                    lap_dist = 0.0
+                print(f"  {t:.3f}s  {lap_dist:.2f}m")
 
     return samples_by_lap
