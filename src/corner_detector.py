@@ -1,23 +1,13 @@
 import csv
 from pathlib import Path
 
-# Calibrated window for Monza Turn 1 (Variante del Rettifilo) braking zone
-# from real driving data: brake onset observed at lap_distance=813.38m.
-TURN_1_ZONE: tuple[float, float] = (700.0, 950.0)
 
-
-def is_in_turn1(lap_distance: float) -> bool:
-    """Return True if *lap_distance* falls within the Turn 1 zone."""
-    start, end = TURN_1_ZONE
-    return start <= lap_distance <= end
-
-
-def extract_turn1_samples(csv_path: str) -> dict[int, list[dict]]:
+def extract_corner_samples(csv_path: str, zone: tuple[float, float]) -> dict[int, list[dict]]:
     """
     Read a session CSV, print a TEL idle-row summary and non-idle stint
     boundaries, then return telemetry rows (packet_id 6) grouped by lap
     number whose nearest preceding LAP row (packet_id 2) has a
-    lap_distance inside TURN_1_ZONE. LAP rows that are too old are treated
+    lap_distance inside *zone*. LAP rows that are too old are treated
     as stale and ignored, preventing idle/paused TEL rows from being
     misclassified.
     """
@@ -82,9 +72,10 @@ def extract_turn1_samples(csv_path: str) -> dict[int, list[dict]]:
         )
     print()
 
-    # --- Turn 1 extraction (distance + lap group) -------------------------
+    # --- Corner extraction (distance + lap group) -------------------------
     samples_by_lap: dict[int, list[dict]] = {}
     stale_excluded = 0
+    start, end = zone
     last_lap_distance: float | None = None
     last_lap_num: int | None = None
     last_lap_frame: int | None = None
@@ -126,14 +117,14 @@ def extract_turn1_samples(csv_path: str) -> dict[int, list[dict]]:
             if speed < 5.0:
                 continue
 
-            if is_in_turn1(last_lap_distance) and last_lap_num is not None:
+            if start <= last_lap_distance <= end and last_lap_num is not None:
                 annotated = dict(row)
                 annotated["lap_distance"] = last_lap_distance
                 samples_by_lap.setdefault(last_lap_num, []).append(annotated)
 
     print(f"Excluded {stale_excluded} samples due to stale lap_distance")
 
-    print("\nTurn 1 samples per lap:")
+    print("\nCorner samples per lap:")
     for lap_num in sorted(samples_by_lap):
         lap_rows = samples_by_lap[lap_num]
         times: list[float] = []
