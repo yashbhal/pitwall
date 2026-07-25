@@ -16,10 +16,23 @@ def main() -> None:
 
     print("Loading Monza zones...")
     zones = load_track_config("monza")
-    turn1_zone = zones["Turn 1"]
 
-    print(f"\nExtracting Turn 1 samples from: {csv_path}")
-    samples_by_lap = corner_detector.extract_corner_samples(csv_path, turn1_zone)
+    print("\nAvailable zones:")
+    for name in zones:
+        print(f"  {name}")
+
+    chosen_corner = input("\nEnter corner name to analyze: ").strip()
+    if chosen_corner not in zones:
+        raise SystemExit(
+            f"Corner {chosen_corner!r} not found. Available: {list(zones.keys())}"
+        )
+
+    corner_config = zones[chosen_corner]
+    corner_zone = corner_config["zone"]
+    reference = corner_config.get("reference")
+
+    print(f"\nExtracting {chosen_corner} samples from: {csv_path}")
+    samples_by_lap = corner_detector.extract_corner_samples(csv_path, corner_zone)
 
     print("\nSamples are grouped by lap number:")
     for lap_num in sorted(samples_by_lap):
@@ -82,7 +95,7 @@ def main() -> None:
     reapps_for_coach = [{"distance_m": r["lap_distance"]} for r in reapplications]
 
     feedback = coach.generate_corner_feedback(
-        "Turn 1", onset_for_coach, reapps_for_coach
+        chosen_corner, onset_for_coach, reapps_for_coach, reference=reference
     )
 
     print("\n--- coach.generate_corner_feedback output ---")
