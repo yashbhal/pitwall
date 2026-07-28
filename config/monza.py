@@ -10,7 +10,7 @@ TURN_ZONES = {
         "zone": (700.0, 950.0),  # calibrated from real brake onset at
                                   # ~786.5m across two passes (clean +
                                   # messy), see pitwall-plan.md section 20
-        "reference": None,
+        "reference": {"distance_m": 786.5, "speed_kmh": 327.0},
     },
     "Roggia": {
         # calibrated from real driving data; clean pass onset ~2018.4m @ 313 km/h
