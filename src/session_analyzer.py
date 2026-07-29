@@ -8,11 +8,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src import brake_analyzer, coach, corner_detector
-from config.loader import load_track_config
+from config.loader import load_thresholds, load_track_config
 
-# Attempt-validity thresholds. Intentionally local constants for now:
-# config/thresholds.yaml is currently unwired and hooking it up is a
-# separate change.
+# Attempt-validity limits. These stay local constants because they are not part
+# of the plan's threshold list in config/thresholds.yaml; the brake and drill
+# tuning values are loaded from there.
 MIN_STINT_SAMPLES = 20
 MAX_STINT_SAMPLES = 900
 MIN_MID_STINT_SPEED_KMH = 30.0
@@ -131,7 +131,9 @@ def _group_into_passes(fragments: list[dict]) -> list[list[dict]]:
     return passes
 
 
-def _analyze_passes(passes: list[list[dict]]) -> tuple[list[dict], list[dict]]:
+def _analyze_passes(
+    passes: list[list[dict]], thresholds: dict
+) -> tuple[list[dict], list[dict]]:
     """Turn grouped fragments into valid attempt records plus rejections.
 
     A pass yields at most one attempt: the earliest fragment that survives
@@ -161,13 +163,15 @@ def _analyze_passes(passes: list[list[dict]]) -> tuple[list[dict], list[dict]]:
                 pass_rejections.append(rejection)
                 continue
 
-            onset = brake_analyzer.find_brake_onset(fragment["stint"])
+            onset = brake_analyzer.find_brake_onset(fragment["stint"], thresholds)
             if onset is None:
-                rejection["reason"] = "no_brake_onset"
+                rejection["reason"] = "no_sustained_brake_onset"
                 pass_rejections.append(rejection)
                 continue
 
-            reapps = brake_analyzer.find_brake_reapplications(fragment["stint"])
+            reapps = brake_analyzer.find_brake_reapplications(
+                fragment["stint"], thresholds, onset=onset
+            )
             reapplications = [{"distance_m": r["lap_distance"]} for r in reapps]
 
             valid_records.append(
@@ -212,11 +216,15 @@ def analyze_session(csv_path: str, track_name: str) -> dict:
     onset distances across the surviving attempts is reported alongside a
     single representative attempt used for the feedback text.
 
-    Ranking is unchanged: prefer more brake reapplications first, then break
-    ties with larger absolute onset-distance deviation from the configured
-    reference (if any). Both are taken from the representative attempt.
+    Ranking prefers the corner with the widest brake onset variation, since
+    that is the headline consistency metric. Corners whose variation could not
+    be measured rank last; reapplication_count and absolute onset-distance
+    deviation from the configured reference remain as tiebreakers.
     """
     zones = load_track_config(track_name)
+    thresholds = load_thresholds()
+    minimum_valid_attempts = int(thresholds["minimum_valid_attempts_for_drill"])
+    variation_warning_m = float(thresholds["brake_variation_warning_meters"])
     all_corners: dict[str, dict] = {}
 
     for corner_name, cfg in zones.items():
@@ -227,9 +235,10 @@ def analyze_session(csv_path: str, track_name: str) -> dict:
 
         fragments = _build_fragments(samples_by_lap)
         passes = _group_into_passes(fragments)
-        attempts, rejected = _analyze_passes(passes)
+        attempts, rejected = _analyze_passes(passes, thresholds)
 
         onset_distances = [a["onset_distance_m"] for a in attempts]
+        reapplication_total = sum(a["reapplication_count"] for a in attempts)
 
         if len(onset_distances) >= 2:
             onset_variation_m = max(onset_distances) - min(onset_distances)
@@ -286,10 +295,11 @@ def analyze_session(csv_path: str, track_name: str) -> dict:
                 reference=reference,
             )
 
-            all_corners[corner_name] = {
+            corner_metrics = {
                 "status": "ok",
                 "valid_attempts": len(attempts),
                 "reapplication_count": representative["reapplication_count"],
+                "reapplication_total": reapplication_total,
                 "onset_delta_abs": onset_delta_abs,
                 "onset_distance_m": onset_for_coach["distance_m"],
                 "onset_speed_kmh": onset_for_coach["speed_kmh"],
@@ -299,11 +309,19 @@ def analyze_session(csv_path: str, track_name: str) -> dict:
                 "rejected_attempts": rejected,
                 "feedback": feedback,
             }
+            corner_metrics["drill"] = coach.generate_drill(
+                corner_name,
+                corner_metrics,
+                minimum_valid_attempts=minimum_valid_attempts,
+                variation_warning_m=variation_warning_m,
+            )
+            all_corners[corner_name] = corner_metrics
         else:
             all_corners[corner_name] = {
                 "status": "no_data",
                 "valid_attempts": 0,
                 "reapplication_count": 0,
+                "reapplication_total": 0,
                 "onset_delta_abs": 0.0,
                 "onset_distance_m": None,
                 "onset_speed_kmh": None,
@@ -312,6 +330,7 @@ def analyze_session(csv_path: str, track_name: str) -> dict:
                 "attempts_detail": [],
                 "rejected_attempts": rejected,
                 "feedback": None,
+                "drill": None,
             }
 
     ok_corners = [
@@ -319,22 +338,40 @@ def analyze_session(csv_path: str, track_name: str) -> dict:
     ]
 
     if ok_corners:
-        priority_corner = max(
-            ok_corners,
-            key=lambda name: (
-                all_corners[name]["reapplication_count"],
-                all_corners[name]["onset_delta_abs"],
-            ),
-        )
+
+        def _priority_key(name: str) -> tuple[int, float, int, float]:
+            """Rank corners worst-consistency-first.
+
+            onset_variation_m is the headline metric in pitwall-plan.md section
+            11, so it leads: a wider spread of brake onsets is a higher
+            priority. Corners whose variation could not be measured (fewer than
+            two valid attempts) sort below every measured corner rather than
+            being treated as perfectly consistent, matching the plan's warning
+            against drawing conclusions from too little data. Among those,
+            reapplication_count then onset_delta_abs still break the tie.
+            """
+            data = all_corners[name]
+            variation = data["onset_variation_m"]
+            return (
+                0 if variation is None else 1,
+                0.0 if variation is None else variation,
+                data["reapplication_count"],
+                data["onset_delta_abs"],
+            )
+
+        priority_corner = max(ok_corners, key=_priority_key)
         priority_feedback = all_corners[priority_corner]["feedback"]
+        priority_drill = all_corners[priority_corner]["drill"]
     else:
         priority_corner = None
         priority_feedback = "No valid corner data available."
+        priority_drill = "No valid corner data available."
 
     return {
         "all_corners": all_corners,
         "priority_corner": priority_corner,
         "priority_feedback": priority_feedback,
+        "priority_drill": priority_drill,
     }
 
 
@@ -372,6 +409,7 @@ if __name__ == "__main__":
         print(
             f"Valid attempts: {data['valid_attempts']} | "
             f"onset variation: {variation_text} | "
+            f"reapplications: {data['reapplication_total']} | "
             f"rejected fragments: {len(data['rejected_attempts'])}"
         )
 
@@ -382,3 +420,8 @@ if __name__ == "__main__":
     print(f"Priority corner: {report['priority_corner']}")
     print()
     print(report["priority_feedback"])
+    print()
+    print("-" * 60)
+    print("DRILL")
+    print("-" * 60)
+    print(report["priority_drill"])
