@@ -1,0 +1,21 @@
+{% extends "base.html" %} {% block title %}PitWall - sessions{% endblock %} {%
+block content %}
+<h1>Recorded sessions</h1>
+<p class="muted">From {{ session_dir }}</p>
+
+{% if sessions %}
+<ul class="session-list">
+  {% for name in sessions %}
+  <li>
+    <a href="{{ url_for('session_report', filename=name, track=track_name) }}"
+      >{{ name }}</a
+    >
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="empty">
+  No session CSVs found. Record a session first, then reload this page.
+</p>
+{% endif %}
+{% endblock %}

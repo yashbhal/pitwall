@@ -1,0 +1,85 @@
+{% extends "base.html" %} {% block title %}PitWall - {{ view.session_name }}{%
+endblock %} {% block content %}
+<h1>{{ view.session_name }}</h1>
+<p class="muted">Track: {{ view.track_name }}</p>
+
+<section class="card priority">
+  <h2>
+    Priority
+    {% if view.priority_corner %}<span class="badge"
+      >{{ view.priority_corner }}</span
+    >{% endif %}
+  </h2>
+  <p class="reason">{{ view.priority_reason }}</p>
+  <h3>Finding</h3>
+  <pre>{{ view.priority_feedback }}</pre>
+  <h3>Drill</h3>
+  <pre>{{ view.priority_drill }}</pre>
+</section>
+
+<h2>Per-corner summary</h2>
+{% for corner in view.corners %}
+<section class="card corner {% if corner.is_priority %}is-priority{% endif %}">
+  <h3>
+    {{ corner.name }}
+    {% if corner.is_priority %}<span class="badge">priority</span>{% endif %}
+    {% if not corner.has_data %}<span class="badge warn">no data</span>{% endif %}
+  </h3>
+
+  <dl class="metrics">
+    <div>
+      <dt>Valid attempts</dt>
+      <dd>{{ corner.valid_attempts }}</dd>
+    </div>
+    <div>
+      <dt>Onset variation</dt>
+      <dd class="{% if not corner.is_measured %}unmeasured{% endif %}">
+        {{ corner.onset_variation }}
+      </dd>
+    </div>
+    <div>
+      <dt>Onset stdev</dt>
+      <dd class="{% if not corner.is_measured %}unmeasured{% endif %}">
+        {{ corner.onset_stdev }}
+      </dd>
+    </div>
+    <div>
+      <dt>Onset (representative attempt)</dt>
+      <dd>{{ corner.onset_distance }} @ {{ corner.onset_speed }}</dd>
+    </div>
+    <div>
+      <dt>Reapplications (representative attempt)</dt>
+      <dd>{{ corner.reapplication_count }}</dd>
+    </div>
+    <div>
+      <dt>Reapplications (all attempts)</dt>
+      <dd>{{ corner.reapplication_total }}</dd>
+    </div>
+    <div>
+      <dt>Rejected fragments</dt>
+      <dd>{{ corner.rejected_count }}</dd>
+    </div>
+  </dl>
+
+  {% if corner.feedback %}
+  <h4>Finding</h4>
+  <pre>{{ corner.feedback }}</pre>
+  {% endif %} {% if corner.drill %}
+  <h4>Drill</h4>
+  <pre>{{ corner.drill }}</pre>
+  {% else %}
+  <p class="muted">No brake onset was detected in this zone.</p>
+  {% endif %}
+</section>
+{% endfor %}
+
+<section class="card unavailable">
+  <h2>Not analysed in this session</h2>
+  <p>{{ view.unavailable_metrics_note }}</p>
+  <ul>
+    {% for metric in view.unavailable_metrics %}
+    <li>{{ metric }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}
