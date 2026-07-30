@@ -203,13 +203,84 @@ def _analyze_passes(
     return attempts, rejected
 
 
+def _priority_key(data: dict) -> tuple[int, float, int, float]:
+    """Rank corners worst-consistency-first.
+
+    onset_variation_m is the headline metric in pitwall-plan.md section 11, so
+    it leads: a wider spread of brake onsets is a higher priority. Corners
+    whose variation could not be measured (fewer than two valid attempts) sort
+    below every measured corner rather than being treated as perfectly
+    consistent, matching the plan's warning against drawing conclusions from
+    too little data. Among those, reapplication_count then onset_delta_abs
+    still break the tie.
+
+    Higher key means higher priority, so callers sort descending.
+    """
+    variation = data["onset_variation_m"]
+    return (
+        0 if variation is None else 1,
+        0.0 if variation is None else variation,
+        data["reapplication_count"],
+        data["onset_delta_abs"],
+    )
+
+
+def rank_corners(all_corners: dict[str, dict]) -> list[dict]:
+    """Order every corner by priority, highest first.
+
+    Corners with a detectable brake onset get ranks 1..N from _priority_key.
+    Corners with no valid attempt at all were never ranked before and still
+    are not: they carry rank None and trail the list, because there is no
+    metric to rank them on. Each entry repeats the three signals the ordering
+    was decided by so a caller can explain a rank without re-deriving it.
+
+    The sort is stable and descending, so corners with identical keys keep
+    their track-config order and entry 1 is the same corner the previous
+    max()-based selection returned.
+    """
+    ok_names = [
+        name for name, data in all_corners.items() if data["status"] == "ok"
+    ]
+    ok_names.sort(key=lambda name: _priority_key(all_corners[name]), reverse=True)
+
+    entries = [
+        {
+            "corner": name,
+            "rank": position,
+            "status": all_corners[name]["status"],
+            "onset_variation_m": all_corners[name]["onset_variation_m"],
+            "reapplication_count": all_corners[name]["reapplication_count"],
+            "onset_delta_abs": all_corners[name]["onset_delta_abs"],
+        }
+        for position, name in enumerate(ok_names, start=1)
+    ]
+
+    entries.extend(
+        {
+            "corner": name,
+            "rank": None,
+            "status": data["status"],
+            "onset_variation_m": data["onset_variation_m"],
+            "reapplication_count": data["reapplication_count"],
+            "onset_delta_abs": data["onset_delta_abs"],
+        }
+        for name, data in all_corners.items()
+        if data["status"] != "ok"
+    )
+
+    return entries
+
+
 def analyze_session(csv_path: str, track_name: str) -> dict:
     """Analyze a session CSV and produce per-corner feedback plus one priority.
 
-    The returned dict has three keys:
+    The returned dict has these keys:
       - all_corners: dict mapping corner name to its metrics/feedback.
-      - priority_corner: the single highlighted corner.
+      - ranked_corners: every corner as {corner, rank, ...ranking signals},
+        ordered highest priority first; see rank_corners.
+      - priority_corner: the single highlighted corner, i.e. rank 1.
       - priority_feedback: the human-readable recommendation for that corner.
+      - priority_drill: the drill for that corner.
 
     Every stint in the session is scored, not just the longest one. Stints are
     grouped into real passes, filtered for validity, and the spread of brake
@@ -333,33 +404,11 @@ def analyze_session(csv_path: str, track_name: str) -> dict:
                 "drill": None,
             }
 
-    ok_corners = [
-        name for name, data in all_corners.items() if data["status"] == "ok"
-    ]
+    ranked_corners = rank_corners(all_corners)
+    ranked_with_data = [e for e in ranked_corners if e["rank"] is not None]
 
-    if ok_corners:
-
-        def _priority_key(name: str) -> tuple[int, float, int, float]:
-            """Rank corners worst-consistency-first.
-
-            onset_variation_m is the headline metric in pitwall-plan.md section
-            11, so it leads: a wider spread of brake onsets is a higher
-            priority. Corners whose variation could not be measured (fewer than
-            two valid attempts) sort below every measured corner rather than
-            being treated as perfectly consistent, matching the plan's warning
-            against drawing conclusions from too little data. Among those,
-            reapplication_count then onset_delta_abs still break the tie.
-            """
-            data = all_corners[name]
-            variation = data["onset_variation_m"]
-            return (
-                0 if variation is None else 1,
-                0.0 if variation is None else variation,
-                data["reapplication_count"],
-                data["onset_delta_abs"],
-            )
-
-        priority_corner = max(ok_corners, key=_priority_key)
+    if ranked_with_data:
+        priority_corner = ranked_with_data[0]["corner"]
         priority_feedback = all_corners[priority_corner]["feedback"]
         priority_drill = all_corners[priority_corner]["drill"]
     else:
@@ -369,6 +418,7 @@ def analyze_session(csv_path: str, track_name: str) -> dict:
 
     return {
         "all_corners": all_corners,
+        "ranked_corners": ranked_corners,
         "priority_corner": priority_corner,
         "priority_feedback": priority_feedback,
         "priority_drill": priority_drill,
@@ -411,6 +461,26 @@ if __name__ == "__main__":
             f"onset variation: {variation_text} | "
             f"reapplications: {data['reapplication_total']} | "
             f"rejected fragments: {len(data['rejected_attempts'])}"
+        )
+
+    print()
+    print("=" * 60)
+    print("RANKED CORNERS")
+    print("=" * 60)
+    for entry in report["ranked_corners"]:
+        rank = "-" if entry["rank"] is None else str(entry["rank"])
+        variation = entry["onset_variation_m"]
+        variation_text = (
+            "n/a (needs 2+ valid attempts)"
+            if variation is None
+            else f"{variation:.1f} m"
+        )
+        print(
+            f"  #{rank:<3} {entry['corner']:<12} "
+            f"variation={variation_text:<30} "
+            f"reapplications={entry['reapplication_count']} "
+            f"onset_delta_abs={entry['onset_delta_abs']:.1f} m "
+            f"[{entry['status']}]"
         )
 
     print()
