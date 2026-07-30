@@ -98,7 +98,7 @@ if __name__ == "__main__":
         raise SystemExit(1)
 
     samples_by_lap = corner_detector.extract_corner_samples(
-        csv_path, zones[corner_name]["zone"]
+        csv_path, zones[corner_name]["zone"], verbose=True
     )
 
     print(f"\n=== Exit gear: {corner_name} ({csv_path}) ===")

@@ -32,7 +32,9 @@ def main() -> None:
     reference = corner_config.get("reference")
 
     print(f"\nExtracting {chosen_corner} samples from: {csv_path}")
-    samples_by_lap = corner_detector.extract_corner_samples(csv_path, corner_zone)
+    samples_by_lap = corner_detector.extract_corner_samples(
+        csv_path, corner_zone, verbose=True
+    )
 
     print("\nSamples are grouped by lap number:")
     for lap_num in sorted(samples_by_lap):

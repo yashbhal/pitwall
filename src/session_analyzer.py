@@ -296,13 +296,19 @@ def analyze_session(csv_path: str, track_name: str) -> dict:
     thresholds = load_thresholds()
     minimum_valid_attempts = int(thresholds["minimum_valid_attempts_for_drill"])
     variation_warning_m = float(thresholds["brake_variation_warning_meters"])
+
+    # Parse the CSV once and share the rows across every zone. Each corner used
+    # to re-read the whole file, so an N-corner track cost N full parses.
+    rows = corner_detector.read_session_rows(csv_path)
     all_corners: dict[str, dict] = {}
 
     for corner_name, cfg in zones.items():
         zone = cfg["zone"]
         reference = cfg.get("reference")
 
-        samples_by_lap = corner_detector.extract_corner_samples(csv_path, zone)
+        samples_by_lap = corner_detector.extract_corner_samples(
+            csv_path, zone, rows=rows
+        )
 
         fragments = _build_fragments(samples_by_lap)
         passes = _group_into_passes(fragments)
