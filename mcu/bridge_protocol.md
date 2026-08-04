@@ -29,7 +29,7 @@ race where the MCU runs before the Python side exists and early messages are
 lost, so no MCU-side handshake loop is needed.
 
 Defined in `src/bridge_client.py` (`BRIDGE_METHOD`, `STATE_*`) and
-`mcu/led_matrix_controller/sketch.ino`. Both must be edited together.
+`mcu/pitwall_led_app/sketch/sketch.ino`. Both must be edited together.
 
 ## Hardware reality: the matrix has no colour, and colour is not used
 
@@ -151,12 +151,21 @@ this pairing is enforced by this document, not by code. Current values: resend
 ## How "connected" is determined
 
 State 1 means *the session CSV that `src/session_logger.py` is writing is still
-growing*. `src/bridge_client.py` stats the newest file in `data/raw/` and
-compares its mtime against `telemetry_stale_after_ms`.
+growing*. `src/bridge_client.py` stats the newest file in the recording
+directory and compares its mtime against `telemetry_stale_after_ms`.
 
-This reads the existing logger's real output. It does not import, wrap or modify
-`session_logger.py`, `session_analyzer.py`, `brake_analyzer.py`, `coach.py` or
-the Flask dashboard.
+Both sides resolve that directory through `session_store.resolve_session_dir()`
+(explicit argument, then `PITWALL_SESSION_DIR`, then `data/raw` beside the
+checkout). This matters on the UNO Q: `arduino-app-cli` bind-mounts only the App
+folder to `/app`, so the LED App cannot see a recording directory outside it.
+Set `PITWALL_SESSION_DIR` for the recorder to a directory inside the App folder
+rather than relying on which copy of the code is running.
+
+This reads the existing logger's real output. `bridge_client.py` does not import
+or wrap `session_logger.py`, `session_analyzer.py`, `brake_analyzer.py`,
+`coach.py` or the Flask dashboard, and does not change how any of them behave.
+The logger's only change is that its output directory now comes from
+`resolve_session_dir()` instead of a hardcoded path; its default is unchanged.
 
 Consequence to be aware of: `session_logger.py` flushes every 50 rows, so mtime
 lags packet arrival slightly. `telemetry_stale_after_ms` is 3000 ms to absorb

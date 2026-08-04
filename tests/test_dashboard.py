@@ -4,9 +4,11 @@ No telemetry CSVs and no real analysis are needed: the analyzer is injected as
 a stub, so these tests cover only the web and presentation layers.
 """
 
+import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -93,6 +95,50 @@ class SessionStoreTest(unittest.TestCase):
             with self.subTest(name=name):
                 with self.assertRaises(session_store.SessionNotFound):
                     session_store.resolve_session(name, self.session_dir)
+
+
+class SessionDirResolutionTest(unittest.TestCase):
+    """The writer and the LED reader must land on the same directory."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp_dir = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def test_defaults_to_checkout_path_without_override(self):
+        with unittest.mock.patch.dict(
+            os.environ, {}, clear=False
+        ) as environ:
+            environ.pop(session_store.SESSION_DIR_ENV_VAR, None)
+            self.assertEqual(
+                session_store.DEFAULT_SESSION_DIR,
+                session_store.resolve_session_dir(),
+            )
+
+    def test_environment_variable_overrides_default(self):
+        with unittest.mock.patch.dict(
+            os.environ, {session_store.SESSION_DIR_ENV_VAR: str(self.tmp_dir)}
+        ):
+            self.assertEqual(
+                self.tmp_dir, session_store.resolve_session_dir()
+            )
+
+    def test_explicit_argument_wins_over_environment_variable(self):
+        with unittest.mock.patch.dict(
+            os.environ, {session_store.SESSION_DIR_ENV_VAR: "/not/used"}
+        ):
+            self.assertEqual(
+                self.tmp_dir, session_store.resolve_session_dir(self.tmp_dir)
+            )
+
+    def test_blank_environment_variable_is_ignored(self):
+        with unittest.mock.patch.dict(
+            os.environ, {session_store.SESSION_DIR_ENV_VAR: "   "}
+        ):
+            self.assertEqual(
+                session_store.DEFAULT_SESSION_DIR,
+                session_store.resolve_session_dir(),
+            )
 
 
 class ReportViewTest(unittest.TestCase):

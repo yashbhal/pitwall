@@ -10,12 +10,20 @@ States 0, 1 and 7 appear on the side status LED; states 2-6 are in-the-moment
 driving cues on the 8x13 matrix and are not implemented yet.
 
 State is derived from the real recording activity of session_logger.py -- the
-newest CSV in data/raw/ growing means UDP telemetry is arriving. This module
-never imports the analysis or dashboard code and never modifies it.
+newest CSV in the recording directory growing means UDP telemetry is arriving.
+This module never imports the analysis or dashboard code and never modifies it.
+
+Which directory that is comes from session_store.resolve_session_dir(), so
+--session-dir or PITWALL_SESSION_DIR points the reader and the writer at the
+same folder explicitly.
 
 Run standalone (falls back to printing state changes if Bridge is unavailable):
 
     python3 src/bridge_client.py
+
+Bridge only exists inside an Arduino App's managed container, so for real LED
+output this module is driven by mcu/pitwall_led_app/python/main.py, started with
+``arduino-app-cli app start ~/ArduinoApps/pitwall-led``.
 """
 
 from __future__ import annotations
@@ -195,10 +203,13 @@ def build_applab_loop(session_dir: Path | None = None):
 
     App Lab calls user_loop as fast as it returns, so the sleep belongs here
     rather than in tick().
+
+    There are no command-line arguments in the App Lab path, so the directory
+    comes from the caller or PITWALL_SESSION_DIR.
     """
     config = load_led_feedback_config()
     transport = open_transport()
-    directory = session_dir or session_store.DEFAULT_SESSION_DIR
+    directory = session_store.resolve_session_dir(session_dir)
     signaller = LedSignaller(transport, directory, config)
     interval = float(config["led_state_poll_interval_ms"]) / 1000.0
 
@@ -222,18 +233,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--session-dir",
         type=Path,
-        default=session_store.DEFAULT_SESSION_DIR,
-        help="directory holding session CSVs (default: data/raw)",
+        default=None,
+        help=(
+            "directory holding session CSVs; overrides "
+            f"${session_store.SESSION_DIR_ENV_VAR} and the default data/raw"
+        ),
     )
     args = parser.parse_args(argv)
 
     config = load_led_feedback_config()
     transport = open_transport(force_print=args.print_only)
-    signaller = LedSignaller(transport, args.session_dir, config)
+    session_dir = session_store.resolve_session_dir(args.session_dir)
+    signaller = LedSignaller(transport, session_dir, config)
     interval = float(config["led_state_poll_interval_ms"]) / 1000.0
 
     print(f"[led] transport: {transport.name}")
-    print(f"[led] watching: {args.session_dir}")
+    print(f"[led] watching: {session_dir}")
     print(f"[led] polling every {interval:.2f}s; Ctrl-C to stop")
 
     try:

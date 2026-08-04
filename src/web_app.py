@@ -35,14 +35,16 @@ TRACK_NAME_PATTERN = re.compile(r"[a-z0-9_]{1,40}")
 
 def create_app(
     analyzer=analyze_session,
-    session_dir: Path = session_store.DEFAULT_SESSION_DIR,
+    session_dir: Path | None = None,
     default_track: str = DEFAULT_TRACK,
 ) -> Flask:
     """Build the dashboard app.
 
     *analyzer* and *session_dir* are injected so routes can be tested without
-    real telemetry CSVs.
+    real telemetry CSVs. Left unset, the recording directory is resolved the
+    same way the logger and LED client resolve it.
     """
+    session_dir = session_store.resolve_session_dir(session_dir)
     app = Flask(__name__)
 
     def render_error(title: str, detail: str, status: int):

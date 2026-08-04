@@ -1,0 +1,2 @@
+# bridge_client.py and config/loader.py are deliberately stdlib-only,
+# so nothing needs installing inside the App container.

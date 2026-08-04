@@ -1,8 +1,17 @@
 import csv
 import datetime
+import sys
 from pathlib import Path
 
-RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src import session_store
+
+# Resolved through session_store so PITWALL_SESSION_DIR points this writer and
+# bridge_client.py's reader at one directory explicitly.
+RAW_DIR = session_store.resolve_session_dir()
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 
 SESSION_TIMESTAMP = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")

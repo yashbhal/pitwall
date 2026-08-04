@@ -17,7 +17,8 @@
 // rhythm and brightness, so nothing needs re-auditing for colour vision
 // deficiency.
 //
-// Paste into the sketch/sketch.ino of an Arduino App Lab App.
+// This is the MCU half of the Arduino App in mcu/pitwall_led_app; arduino-app-cli
+// compiles and flashes it when the App is started.
 
 #include <Arduino_LED_Matrix.h>
 #include <Arduino_RouterBridge.h>

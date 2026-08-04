@@ -525,7 +525,7 @@ text
 
 text
 
-`pitwall/ ├── README.md ├── docs/ │   ├── architecture.md │   ├── telemetry-fields.md │   ├── test-plan.md │   └── demo-script.md ├── config/ │   ├── monza_corners.yaml │   ├── thresholds.yaml │   └── assist_profiles.yaml ├── data/ │   ├── raw/ │   ├── processed/ │   └── sessions/ ├── src/ │   ├── udp_listener.py │   ├── packet_parser.py │   ├── session_logger.py │   ├── corner_segmenter.py │   ├── metrics.py │   ├── detectors.py │   ├── coaching.py │   ├── edge_impulse_runtime.py │   ├── bridge_client.py │   └── web_app.py ├── mcu/ │   ├── led_matrix_controller/ │   └── bridge_protocol.md ├── edge_impulse/ │   ├── dataset_notes.md │   └── model_version.txt └── tests/     ├── test_detectors.py    ├── test_corner_segmenter.py    └── replay_telemetry.py`
+`pitwall/ ├── README.md ├── docs/ │   ├── architecture.md │   ├── telemetry-fields.md │   ├── test-plan.md │   └── demo-script.md ├── config/ │   ├── monza_corners.yaml │   ├── thresholds.yaml │   └── assist_profiles.yaml ├── data/ │   ├── raw/ │   ├── processed/ │   └── sessions/ ├── src/ │   ├── udp_listener.py │   ├── packet_parser.py │   ├── session_logger.py │   ├── corner_segmenter.py │   ├── metrics.py │   ├── detectors.py │   ├── coaching.py │   ├── edge_impulse_runtime.py │   ├── bridge_client.py │   └── web_app.py ├── mcu/ │   ├── pitwall_led_app/ (Arduino App: app.yaml, python/main.py, sketch/sketch.ino, sketch/sketch.yaml) │   └── bridge_protocol.md ├── edge_impulse/ │   ├── dataset_notes.md │   └── model_version.txt └── tests/     ├── test_detectors.py    ├── test_corner_segmenter.py    └── replay_telemetry.py`
 
 ---
 

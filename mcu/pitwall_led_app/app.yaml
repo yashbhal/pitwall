@@ -1,0 +1,8 @@
+name: PitWall LED
+description: "Mirrors PitWall telemetry recording status onto the UNO Q status LED over Bridge RPC"
+icon: 🏎️
+version: "1.0.0"
+
+ports: []
+
+bricks: []
