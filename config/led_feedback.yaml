@@ -1,0 +1,4 @@
+led_state_poll_interval_ms: 250
+telemetry_stale_after_ms: 3000
+bridge_state_resend_ms: 1000
+bridge_call_timeout_ms: 1000
