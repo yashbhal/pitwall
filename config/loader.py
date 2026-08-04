@@ -5,6 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 
 THRESHOLDS_PATH = Path(__file__).resolve().parent / "thresholds.yaml"
+LED_FEEDBACK_PATH = Path(__file__).resolve().parent / "led_feedback.yaml"
 
 
 def _parse_scalar(raw: str) -> int | float | str:
@@ -68,13 +69,15 @@ def _parse_flat_yaml(text: str, source: str) -> dict[str, int | float | str]:
     return values
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=8)
+def _cached_flat_config(path: Path) -> dict[str, int | float | str]:
+    if not path.exists():
+        raise ValueError(f"No config file found at {path}")
+    return _parse_flat_yaml(path.read_text(encoding="utf-8"), path.name)
+
+
 def _cached_thresholds() -> dict[str, int | float | str]:
-    if not THRESHOLDS_PATH.exists():
-        raise ValueError(f"No thresholds file found at {THRESHOLDS_PATH}")
-    return _parse_flat_yaml(
-        THRESHOLDS_PATH.read_text(encoding="utf-8"), THRESHOLDS_PATH.name
-    )
+    return _cached_flat_config(THRESHOLDS_PATH)
 
 
 def load_thresholds() -> dict[str, int | float | str]:
@@ -84,6 +87,17 @@ def load_thresholds() -> dict[str, int | float | str]:
     fresh copy each call so callers cannot mutate the cached parse.
     """
     return dict(_cached_thresholds())
+
+
+def load_led_feedback_config() -> dict[str, int | float | str]:
+    """Load config/led_feedback.yaml as a dict of LED signalling constants.
+
+    Timing for the Linux side of the LED feedback path lives here so it can be
+    tuned without editing src/bridge_client.py. The MCU sketch cannot read this
+    file, so its own watchdog constant is documented in mcu/bridge_protocol.md
+    and must stay longer than ``bridge_state_resend_ms``.
+    """
+    return dict(_cached_flat_config(LED_FEEDBACK_PATH))
 
 
 def load_track_config(track_name: str) -> dict:
