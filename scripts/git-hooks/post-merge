@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+#
+# Board-side git hook: keep the Arduino App folder in step with this checkout.
+#
+# Installed on the UNO Q as .git/hooks/post-merge (plain `git pull`),
+# .git/hooks/post-rewrite (`git pull --rebase`) and .git/hooks/post-checkout
+# (branch switches). Git never clones hooks, so installation is manual and
+# board-local, which is correct: only the board has an App folder.
+#
+# Deliberately non-fatal. A sync failure must not make `git pull` look like it
+# failed, so the error is printed loudly and the exit status stays 0.
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+if ! "$REPO_ROOT/scripts/sync_led_app.sh"; then
+  echo "post-merge: LED App sync FAILED -- the App folder is now STALE" >&2
+  echo "post-merge: rerun scripts/sync_led_app.sh to see the error" >&2
+fi
+
+exit 0
