@@ -2,3 +2,29 @@ led_state_poll_interval_ms: 250
 telemetry_stale_after_ms: 3000
 bridge_state_resend_ms: 1000
 bridge_call_timeout_ms: 1000
+
+# State 2, approaching a focus corner. Zone boundaries are NOT here: they come
+# from config/monza.py so the live cue and the post-session report use the same
+# calibrated numbers.
+focus_track: monza
+
+# Metres past a zone boundary the car must travel before the cue is dropped.
+# Keeps a distance value that jitters across the edge from toggling the matrix.
+corner_approach_hysteresis_m: 25
+
+# Plan section 13: one corner must not produce repeated distracting flashes.
+# A Monza lap is ~90 s and T1 to Roggia is ~17 s, so 20 s blocks re-flashes of
+# the same corner without blocking the next corner.
+corner_cue_min_interval_ms: 20000
+
+# A cue held longer than this means stopped, spun or crawling in the zone, not
+# approaching it. Measured across all five recordings in data/raw/, a real pass
+# through the widened band takes 4.3-7.8 s at Turn 1 and 6.6-10.8 s at Roggia,
+# whose zone is 550 m long. 14 s clears the slowest real pass; anything near 6 s
+# cancels normal cues part-way through the corner.
+# Must stay below corner_cue_min_interval_ms, or a cancelled cue could restart.
+corner_cue_max_duration_ms: 14000
+
+# Bytes read from the end of the recording when first attaching to it. Later
+# polls read only what was appended since the previous poll.
+corner_tail_initial_bytes: 65536

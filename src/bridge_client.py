@@ -6,12 +6,14 @@ full 104-pixel grid pushes over Bridge are unreliable on the UNO Q and would
 need ~30 calls/second to animate, so this module only answers "which situation
 are we in".
 
-States 0, 1 and 7 appear on the side status LED; states 2-6 are in-the-moment
-driving cues on the 8x13 matrix and are not implemented yet.
+States 0, 1 and 7 appear on the side status LED. State 2 is the first matrix
+driving cue: approaching a focus corner. States 3-6 are not implemented yet.
 
 State is derived from the real recording activity of session_logger.py -- the
-newest CSV in the recording directory growing means UDP telemetry is arriving.
-This module never imports the analysis or dashboard code and never modifies it.
+newest CSV in the recording directory growing means UDP telemetry is arriving,
+and the newest lap_distance in that same file says where the car is right now
+(src/corner_approach.py). This module never imports the analysis or dashboard
+code and never modifies it.
 
 Which directory that is comes from session_store.resolve_session_dir(), so
 --session-dir or PITWALL_SESSION_DIR points the reader and the writer at the
@@ -37,8 +39,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from config.loader import load_led_feedback_config
+from config.loader import load_led_feedback_config, load_track_config
 from src import session_store
+from src.corner_approach import CornerApproachMonitor, LapDistanceTail
 
 # Wire protocol. Keep in sync with mcu/bridge_protocol.md and the sketch.
 BRIDGE_METHOD = "pitwall_led_state"
@@ -46,7 +49,11 @@ BRIDGE_METHOD = "pitwall_led_state"
 STATE_IDLE = 0
 STATE_CONNECTED = 1
 
-# Codes 2-6 are matrix driving cues, not yet implemented.
+# First matrix driving cue. The MCU treats it as implying connected, so the side
+# status LED stays steady across the 1 <-> 2 transition (bridge_protocol.md).
+STATE_APPROACH_CORNER = 2
+
+# Codes 3-6 are further matrix cues, not yet implemented.
 
 # Never sent from here. The MCU raises it locally when the heartbeat stops,
 # because a dead Linux process cannot report its own death. Defined so logs and
@@ -56,6 +63,7 @@ STATE_ERROR = 7
 STATE_NAMES = {
     STATE_IDLE: "idle",
     STATE_CONNECTED: "connected",
+    STATE_APPROACH_CORNER: "approaching corner",
     STATE_ERROR: "error (MCU-raised)",
 }
 
@@ -134,6 +142,36 @@ def latest_session_path(session_dir: Path) -> Path | None:
     return session_dir / names[0]
 
 
+def build_approach_monitor(config: dict, clock=time.time) -> CornerApproachMonitor | None:
+    """Build the corner monitor from config, or None if the track is unusable.
+
+    A missing or broken track config must cost the driver the corner cue only.
+    States 0, 1 and 7 are the honesty-critical ones and keep working.
+    """
+    track = str(config.get("focus_track", "")).strip()
+    if not track:
+        print("[led] no focus_track configured; corner cue disabled")
+        return None
+
+    try:
+        zones = load_track_config(track)
+    except (ValueError, AttributeError, KeyError) as exc:
+        print(f"[led] cannot load track {track!r} ({exc}); corner cue disabled")
+        return None
+
+    if not zones:
+        print(f"[led] track {track!r} defines no zones; corner cue disabled")
+        return None
+
+    return CornerApproachMonitor(
+        zones,
+        hysteresis_m=float(config["corner_approach_hysteresis_m"]),
+        min_interval_s=float(config["corner_cue_min_interval_ms"]) / 1000.0,
+        max_duration_s=float(config["corner_cue_max_duration_ms"]) / 1000.0,
+        clock=clock,
+    )
+
+
 class LedSignaller:
     """Decides the current LED state and keeps the MCU informed of it."""
 
@@ -143,6 +181,7 @@ class LedSignaller:
         session_dir: Path = session_store.DEFAULT_SESSION_DIR,
         config: dict | None = None,
         clock=time.time,
+        approach_monitor: CornerApproachMonitor | None = None,
     ):
         cfg = config if config is not None else load_led_feedback_config()
         self._transport = transport
@@ -153,13 +192,36 @@ class LedSignaller:
         self._sent_state: int | None = None
         self._sent_at = 0.0
 
-    def telemetry_age_seconds(self) -> float | None:
+        if approach_monitor is None:
+            approach_monitor = build_approach_monitor(cfg, clock=clock)
+        self._approach = approach_monitor
+
+        # A distance older than the staleness window is not evidence of position,
+        # for the same reason a frozen file is not evidence of a live session.
+        self._tail = LapDistanceTail(
+            initial_tail_bytes=int(cfg["corner_tail_initial_bytes"]),
+            max_age_s=self._stale_after_s,
+            clock=clock,
+        )
+        self._active_corner: str | None = None
+        self._watched_path: Path | None = None
+
+    @property
+    def active_corner(self) -> str | None:
+        """Corner currently being cued, for logs and the simulation harness."""
+        return self._active_corner
+
+    def telemetry_age_seconds(self, path: Path | None = None) -> float | None:
         """Seconds since the active recording last grew, or None if no file.
 
         session_logger.py flushes periodically, so mtime advances while packets
         arrive and freezes when they stop.
+
+        *path* is accepted so one tick can stat the recording it already located
+        instead of listing the directory twice.
         """
-        path = latest_session_path(self._session_dir)
+        if path is None:
+            path = latest_session_path(self._session_dir)
         if path is None:
             return None
 
@@ -171,9 +233,32 @@ class LedSignaller:
         return max(0.0, self._clock() - mtime)
 
     def desired_state(self) -> int:
-        age = self.telemetry_age_seconds()
+        path = latest_session_path(self._session_dir)
+        age = self.telemetry_age_seconds(path)
+
         if age is None or age > self._stale_after_s:
+            # Not recording. Drop any cue, but keep the rate-limit history so a
+            # pause inside a corner cannot be used to re-flash it.
+            if self._approach is not None:
+                self._approach.reset()
+            self._active_corner = None
             return STATE_IDLE
+
+        if self._approach is None:
+            self._active_corner = None
+            return STATE_CONNECTED
+
+        # A different recording means the previous position belongs to a
+        # finished session and must not be compared against this one.
+        if path != self._watched_path:
+            self._approach.forget_position()
+            self._watched_path = path
+
+        distance = self._tail.latest_distance(path)
+        self._active_corner = self._approach.update(distance)
+
+        if self._active_corner is not None:
+            return STATE_APPROACH_CORNER
         return STATE_CONNECTED
 
     def tick(self) -> int:
@@ -190,7 +275,10 @@ class LedSignaller:
         if changed or heartbeat_due:
             if changed:
                 previous = STATE_NAMES.get(self._sent_state, "unset")
-                print(f"[led] {previous} -> {STATE_NAMES.get(state, state)}")
+                label = STATE_NAMES.get(state, state)
+                if self._active_corner is not None:
+                    label = f"{label} ({self._active_corner})"
+                print(f"[led] {previous} -> {label}")
             if self._transport.send_state(state):
                 self._sent_state = state
                 self._sent_at = now
@@ -215,6 +303,7 @@ def build_applab_loop(session_dir: Path | None = None):
 
     print(f"[led] transport: {transport.name}")
     print(f"[led] watching: {directory}")
+    print(f"[led] corner cue track: {config.get('focus_track')}")
 
     def loop() -> None:
         signaller.tick()
@@ -249,6 +338,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"[led] transport: {transport.name}")
     print(f"[led] watching: {session_dir}")
+    print(f"[led] corner cue track: {config.get('focus_track')}")
     print(f"[led] polling every {interval:.2f}s; Ctrl-C to stop")
 
     try:
