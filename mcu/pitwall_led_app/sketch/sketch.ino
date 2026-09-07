@@ -10,8 +10,8 @@
 //                     (idle, connected, error). Small and peripheral, which is
 //                     fine for status. Driven blue only; no colour coding.
 //   8x13 matrix    -- reserved exclusively for in-the-moment driving cues.
-//                     State 2 (approaching focus corner) is implemented;
-//                     states 3-6 are not.
+//                     States 2 (approaching focus corner) and 5 (Edge Impulse
+//                     anomaly) are implemented; states 3, 4 and 6 are not.
 //
 // Colour carries no meaning anywhere in this design. The matrix is MONOCHROME
 // BLUE (UNO Q datasheet ABX00162) and states are encoded as glyph shape, flash
@@ -32,12 +32,14 @@ static const char *BRIDGE_METHOD = "pitwall_led_state";
 static const int STATE_IDLE = 0;       // nothing being recorded: LED off
 static const int STATE_CONNECTED = 1;  // logging normally: LED steady on
 static const int STATE_APPROACH = 2;   // approaching focus corner: matrix pulse
+static const int STATE_ANOMALY = 5;    // Edge Impulse anomaly: matrix circle
 static const int STATE_ERROR = 7;      // connection lost: LED fast alternating
 
-// Codes 2-6 are matrix driving cues (see mcu/bridge_protocol.md); 3-6 are not
-// implemented yet. Every one of them proves Linux is alive, so all are treated
-// as "connected" on the status LED rather than as unknown. State 2 must not
-// disturb the status LED: being in a corner-approach zone is still connected.
+// Codes 2-6 are matrix driving cues (see mcu/bridge_protocol.md); 3, 4 and 6 are
+// not implemented yet. Every one of them proves Linux is alive, so all are
+// treated as "connected" on the status LED rather than as unknown. States 2 and
+// 5 must not disturb the status LED: an odd braking window is still a connected
+// session.
 
 // Linux re-sends the current state as a heartbeat. Silence past this means the
 // Linux side died, which is exactly STATE_ERROR -- Linux cannot report its own
@@ -60,6 +62,18 @@ static const unsigned long APPROACH_PULSE_PERIOD_MS = 1600;
 // indistinguishable from the cue having ended.
 static const uint8_t APPROACH_MIN_BRIGHTNESS = 20;
 static const uint8_t APPROACH_MAX_BRIGHTNESS = 255;
+
+// State 5's rhythm: slower than state 2's pulse, so the two read differently in
+// peripheral vision even before the glyph is recognised. Still nowhere near
+// ERROR_FLASH_INTERVAL_MS, since an anomaly is information, not an alarm.
+static const unsigned long ANOMALY_FADE_PERIOD_MS = 2400;
+static const uint8_t ANOMALY_MIN_BRIGHTNESS = 20;
+static const uint8_t ANOMALY_MAX_BRIGHTNESS = 255;
+
+// Radius of state 5's circle in HALF-pixels, so the centre can sit between rows
+// (3.5, 6) without floating point. 7 gives a disc 8 rows tall and 7 columns
+// wide: as large as the matrix allows vertically while staying round.
+static const int ANOMALY_RADIUS_HALF_PIXELS = 7;
 
 static const uint8_t MATRIX_ROWS = 8;
 static const uint8_t MATRIX_COLS = 13;
@@ -114,23 +128,66 @@ static void drawTriangleUp(uint8_t brightness) {
   matrix.draw(frame);
 }
 
+// Filled circle, centred: the shape with no corners and no direction, which is
+// why state 5 uses it. "Something about this window was unusual" points nowhere,
+// unlike state 2's triangle.
+//
+// Half-pixel coordinates put the centre at row 3.5, col 6 -- the true centre of
+// an 8x13 grid -- using integers only. Same row-major assumption as
+// triangleUpPixel().
+static bool circlePixel(uint8_t row, uint8_t col) {
+  const int dRow = 2 * (int)row - (MATRIX_ROWS - 1);
+  const int dCol = 2 * (int)col - (MATRIX_COLS - 1);
+  const int radius = ANOMALY_RADIUS_HALF_PIXELS;
+  return (dRow * dRow + dCol * dCol) <= (radius * radius);
+}
+
+static void drawCircle(uint8_t brightness) {
+  uint8_t frame[MATRIX_PIXELS];
+  for (uint8_t row = 0; row < MATRIX_ROWS; row++) {
+    for (uint8_t col = 0; col < MATRIX_COLS; col++) {
+      frame[row * MATRIX_COLS + col] = circlePixel(row, col) ? brightness : 0;
+    }
+  }
+  matrix.draw(frame);
+}
+
 // Symmetric triangle wave, so the fade up and the fade down take equal time and
-// the pulse has no visible "snap" back to dim. Derived from millis() alone, so
-// no phase state has to be kept or reset between states.
-static uint8_t pulseBrightness(unsigned long now) {
-  const unsigned long half = APPROACH_PULSE_PERIOD_MS / 2;
-  unsigned long phase = now % APPROACH_PULSE_PERIOD_MS;
+// the cue has no visible "snap" back to dim. Derived from millis() alone, so no
+// phase state has to be kept or reset between states.
+static uint8_t triangleWave(unsigned long now,
+                           unsigned long period,
+                           uint8_t minBrightness,
+                           uint8_t maxBrightness) {
+  const unsigned long half = period / 2;
+  unsigned long phase = now % period;
   if (phase >= half) {
-    phase = APPROACH_PULSE_PERIOD_MS - phase;  // descending half
+    phase = period - phase;  // descending half
   }
 
-  const unsigned long span = APPROACH_MAX_BRIGHTNESS - APPROACH_MIN_BRIGHTNESS;
-  return (uint8_t)(APPROACH_MIN_BRIGHTNESS + (phase * span) / half);
+  const unsigned long span = maxBrightness - minBrightness;
+  return (uint8_t)(minBrightness + (phase * span) / half);
+}
+
+static uint8_t pulseBrightness(unsigned long now) {
+  return triangleWave(now, APPROACH_PULSE_PERIOD_MS, APPROACH_MIN_BRIGHTNESS,
+                      APPROACH_MAX_BRIGHTNESS);
+}
+
+static uint8_t fadeBrightness(unsigned long now) {
+  return triangleWave(now, ANOMALY_FADE_PERIOD_MS, ANOMALY_MIN_BRIGHTNESS,
+                      ANOMALY_MAX_BRIGHTNESS);
 }
 
 static void renderMatrix(int state, unsigned long now) {
   if (state == STATE_APPROACH) {
     drawTriangleUp(pulseBrightness(now));
+    g_matrixLit = true;
+    return;
+  }
+
+  if (state == STATE_ANOMALY) {
+    drawCircle(fadeBrightness(now));
     g_matrixLit = true;
     return;
   }
@@ -196,6 +253,10 @@ static void logStateChange(int state) {
     case STATE_APPROACH:
       Monitor.println(
           "state 2: approaching focus corner (triangle pulse, LED still steady)");
+      break;
+    case STATE_ANOMALY:
+      Monitor.println(
+          "state 5: braking anomaly (circle fade, LED still steady)");
       break;
     case STATE_ERROR:
       Monitor.println("state 7: connection lost (status LED fast flash)");

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Run one real inference of the deployed anomaly model on the UNO Q.
+"""Run one real inference of the deployed anomaly model and show it on the LED.
 
 This is a one-shot proof that the Edge Impulse Linux runtime works on the
 board, not a live pipeline: it feeds a single braking window from an already
-exported CSV (src/edge_impulse_export.py) into the .eim binary and prints
-whatever the SDK gives back, anomaly score included.
+exported CSV (src/edge_impulse_export.py) into the .eim binary, prints whatever
+the SDK gives back, and turns the anomaly score into one LED state.
 
 The impulse was trained on 1.45 s windows at 20 Hz, so it expects exactly
 29 timesteps x 6 axes = 174 float32 features, flattened time-major:
@@ -13,7 +13,22 @@ The impulse was trained on 1.45 s windows at 20 Hz, so it expects exactly
 Axis order must match EI_FEATURE_COLS from the exporter. Exported CSVs are
 already sampled at 50 ms, so the first 29 rows are used as-is -- no resampling.
 
-Run on the board (model path and default CSV both resolve inside the repo):
+The LED half reuses src/bridge_client.py's transport and state codes rather than
+touching Bridge directly, so there is still exactly one definition of the wire
+protocol (mcu/bridge_protocol.md). A clean window sends state 1 (connected,
+matrix dark); an anomalous one sends state 5, the circle fade. Colour is not
+used: the matrix is monochrome blue and states are encoded as glyph and rhythm.
+
+The sketch raises the error state after 3 s without a heartbeat, so the result
+is re-sent every second for HOLD_SECONDS and then handed back as idle. Without
+that, a one-shot send would show the result briefly and then flash an error.
+
+Real LED output needs arduino.app_utils, which only imports inside the App Lab
+container, so run this from the App folder that scripts/sync_led_app.sh mirrors.
+Elsewhere -- laptop, or plain SSH on the board -- bridge_client falls back to
+printing the state instead of pretending an LED changed. The pitwall-led app's
+own loop must not be running at the same time: it re-sends its own state every
+second and would immediately overwrite this one.
 
     python3 src/edge_impulse_runtime.py
     python3 src/edge_impulse_runtime.py data/edge_impulse_export/normal.<...>.csv
@@ -24,6 +39,7 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
+import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -32,6 +48,13 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from edge_impulse_linux.runner import ImpulseRunner
 
+from src.bridge_client import (
+    STATE_ANOMALY,
+    STATE_CONNECTED,
+    STATE_IDLE,
+    STATE_NAMES,
+    open_transport,
+)
 from src.edge_impulse_export import EI_FEATURE_COLS
 
 MODEL_PATH = PROJECT_ROOT / "data" / "pitwall-linux-aarch64-v1-impulse-#1.eim"
@@ -42,6 +65,18 @@ DEFAULT_CSV = (
     / "normal.2026-07-18_211538_turn_1_1.csv"
 )
 WINDOW_ROWS = 29
+
+# Measured on the exported Turn 1 windows this impulse was trained on: normal
+# laps score 0.6-1.7 and the one visibly odd window scores 13.8. 3.0 sits in the
+# empty gap between them, so it is not tuned to either end. One recording is
+# thin evidence for a cutoff -- treat this as a demo threshold, not a calibrated
+# one, and re-derive it once more sessions are scored.
+ANOMALY_CUTOFF = 3.0
+
+# Long enough to look at and point to, short enough that nobody is left holding
+# a stale cue. The heartbeat below keeps the sketch's watchdog quiet meanwhile.
+HOLD_SECONDS = 10.0
+HEARTBEAT_SECONDS = 1.0
 
 
 def load_features(csv_path: Path) -> list[float]:
@@ -62,6 +97,46 @@ def load_features(csv_path: Path) -> list[float]:
     return [float(row[col]) for row in rows for col in EI_FEATURE_COLS]
 
 
+def anomaly_score(result: dict) -> float:
+    """Pull the anomaly score out of the SDK's result dict.
+
+    Missing it means the .eim is not the anomaly impulse we think it is, which
+    is worth failing on rather than defaulting to "looks fine".
+    """
+    try:
+        return float(result["result"]["anomaly"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SystemExit(f"no anomaly score in result {result!r}: {exc}")
+
+
+def state_for_score(score: float) -> int:
+    """Map an anomaly score to an LED state code from mcu/bridge_protocol.md."""
+    return STATE_ANOMALY if score > ANOMALY_CUTOFF else STATE_CONNECTED
+
+
+def hold_state(transport, code: int) -> None:
+    """Show *code* for HOLD_SECONDS, heartbeating, then hand back idle.
+
+    The sketch shows the error state after STATE_TIMEOUT_MS of silence, so the
+    re-send is what keeps a held cue from decaying into a false error. Idle on
+    the way out means the LED does not keep asserting a result after the process
+    that measured it has gone.
+    """
+    print(f"[led] {STATE_NAMES.get(code, code)} for {HOLD_SECONDS:.0f}s")
+    deadline = time.monotonic() + HOLD_SECONDS
+    try:
+        while True:
+            transport.send_state(code)
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(HEARTBEAT_SECONDS)
+    except KeyboardInterrupt:
+        print()
+    finally:
+        print(f"[led] {STATE_NAMES[STATE_IDLE]}")
+        transport.send_state(STATE_IDLE)
+
+
 def main(csv_path: Path) -> None:
     features = load_features(csv_path)
     print(f"model:    {MODEL_PATH}")
@@ -75,9 +150,19 @@ def main(csv_path: Path) -> None:
             f"impulse:  {info['project']['owner']} / {info['project']['name']} "
             f"(v{info['project']['deploy_version']})"
         )
-        print(runner.classify(features))
+        result = runner.classify(features)
+        print(result)
     finally:
         runner.stop()
+
+    score = anomaly_score(result)
+    state = state_for_score(score)
+    verdict = "ANOMALY" if state == STATE_ANOMALY else "normal"
+    print(f"anomaly:  {score:.2f} (cutoff {ANOMALY_CUTOFF:.1f}) -> {verdict}")
+
+    transport = open_transport()
+    print(f"[led] transport: {transport.name}")
+    hold_state(transport, state)
 
 
 if __name__ == "__main__":

@@ -66,9 +66,9 @@ illuminated matrix always means "something just happened".
 
 ## State table
 
-Codes 3-6 are the proposed vocabulary and are **not implemented**. The fastest
-rhythm is reserved exclusively for the error state, so urgency reads through
-speed alone.
+Codes 3, 4 and 6 are the proposed vocabulary and are **not implemented**. The
+fastest rhythm is reserved exclusively for the error state, so urgency reads
+through speed alone.
 
 | Code | State | Device | Glyph | Rhythm | Status |
 |---|---|---|---|---|---|
@@ -77,14 +77,15 @@ speed alone.
 | 2 | Approaching focus corner | matrix | filled triangle pointing up | slow pulse, dim-bright-dim | implemented |
 | 3 | Brake reapplication event | matrix | X (diagonal cross) | fast sharp flash, 2-3 blinks then stop | proposed |
 | 4 | Manual upshift cue (optional) | matrix | upward arrow / chevron | single quick blink | proposed |
-| 5 | Edge Impulse anomaly | matrix | filled circle, centred | slow fade in/out | proposed |
+| 5 | Edge Impulse anomaly | matrix | filled circle, centred | slow fade in/out, 2400 ms | implemented |
 | 6 | Lap complete / session update | matrix | full-width horizontal bar | sweeps across once, then off | proposed |
 | 7 | Error / connection lost | side LED | — | fast alternating flash, 80 ms, reserved | implemented |
 
-State 2's pulse is a symmetric triangle wave over `APPROACH_PULSE_PERIOD_MS`
-(1600 ms), between brightness 20 and 255. It is deliberately the slowest rhythm
-on the board, and it never reaches zero: a cue that goes fully dark is
-indistinguishable from the cue having ended.
+States 2 and 5 both animate as a symmetric triangle wave between brightness 20
+and 255 (`triangleWave()` in the sketch), over `APPROACH_PULSE_PERIOD_MS`
+(1600 ms) and `ANOMALY_FADE_PERIOD_MS` (2400 ms) respectively. They are the two
+slowest rhythms on the board, and neither reaches zero: a cue that goes fully
+dark is indistinguishable from the cue having ended.
 
 Distinguishability check: no two matrix cues share both a glyph and a rhythm.
 The three most consequential distinctions are also the sharpest -- state 3 (X,
@@ -160,6 +161,35 @@ that is not idle or error.
 
 An unknown code (anything outside 0-7) holds the status LED steady and logs a
 warning, rather than being silently ignored, so a protocol mismatch is visible.
+
+## How "Edge Impulse anomaly" is determined
+
+State 5 is the only state not derived from telemetry directly. `.eim` inference
+decides it: `src/edge_impulse_runtime.py` flattens 29 rows x 6 axes of an
+exported braking window into 174 features, runs the deployed anomaly impulse,
+and compares the returned score against `ANOMALY_CUTOFF`. Above it, state 5;
+at or below it, state 1.
+
+The cutoff is 3.0 because the exported Turn 1 windows score 0.6-1.7 when normal
+and 13.8 for the one visibly odd window, so 3.0 sits in the empty gap rather
+than being fitted to either end. That is a single recording's worth of evidence:
+it is a demo threshold and should be re-derived once more sessions are scored.
+
+Unlike states 0-2, nothing polls for this. The script sends one result, re-sends
+it every second so the watchdog stays quiet, and then sends 0 explicitly, so the
+matrix stops asserting a verdict once the process that measured it exits. Two
+things follow from being a separate process:
+
+- Real LED output needs `arduino.app_utils`, which imports only inside the App
+  Lab container, so the script has to be run from the App folder. Elsewhere
+  `open_transport()` prints the state instead of pretending an LED changed.
+- The `pitwall-led` app's own loop must not be running at the same time. It
+  re-sends its own state every `bridge_state_resend_ms` and would overwrite the
+  anomaly cue within a second. One writer per Bridge method at a time.
+
+Merging the two into a single writer -- the LED loop scoring windows itself as
+they are recorded -- is the obvious next step and is why the threshold lives in
+one named constant.
 
 ## Open design question for state 3
 
@@ -242,11 +272,13 @@ connected and idle during a healthy session.
   therefore be added as glyph plus phase functions without restructuring. State 2
   confirmed this: it needed only `triangleUpPixel()`, `drawTriangleUp()`,
   `pulseBrightness()` and one `renderMatrix()` call in `loop()`.
-- `drawTriangleUp()` assumes the flat 104-byte frame is **row-major with 13
-  columns per row**, which is how `drawBlank()` has always addressed it but which
-  nothing in the repo verifies. If the layout is column-major the glyph appears
-  rotated. This is the one thing to eyeball the first time state 2 runs on
-  hardware; only the glyph is affected, not the state machine.
+- `drawTriangleUp()` and `drawCircle()` assume the flat 104-byte frame is
+  **row-major with 13 columns per row**, which is how `drawBlank()` has always
+  addressed it but which nothing in the repo verifies. If the layout is
+  column-major the triangle appears rotated. This is the one thing to eyeball the
+  first time state 2 runs on hardware; only the glyph is affected, not the state
+  machine. State 5's circle is nearly rotationally symmetric and so is a poor
+  diagnostic for this -- judge the layout from the triangle.
 - The matrix is blanked once on leaving state 2 rather than every pass, so an
   unchanged dark matrix costs no Bridge or SPI traffic.
 - `tests/test_sketch_glyph.py` extracts `triangleUpPixel()` and

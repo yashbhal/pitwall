@@ -7,7 +7,9 @@ need ~30 calls/second to animate, so this module only answers "which situation
 are we in".
 
 States 0, 1 and 7 appear on the side status LED. State 2 is the first matrix
-driving cue: approaching a focus corner. States 3-6 are not implemented yet.
+driving cue: approaching a focus corner. State 5 is the Edge Impulse anomaly cue
+and is sent by src/edge_impulse_runtime.py, not from here. States 3, 4 and 6 are
+not implemented yet.
 
 State is derived from the real recording activity of session_logger.py -- the
 newest CSV in the recording directory growing means UDP telemetry is arriving,
@@ -53,7 +55,12 @@ STATE_CONNECTED = 1
 # status LED stays steady across the 1 <-> 2 transition (bridge_protocol.md).
 STATE_APPROACH_CORNER = 2
 
-# Codes 3-6 are further matrix cues, not yet implemented.
+# Codes 3, 4 and 6 are further matrix cues, not yet implemented.
+
+# Edge Impulse flagged the braking window as unlike the training baseline.
+# Sent by src/edge_impulse_runtime.py, not by this module's state machine, which
+# only knows about recording activity and track position.
+STATE_ANOMALY = 5
 
 # Never sent from here. The MCU raises it locally when the heartbeat stops,
 # because a dead Linux process cannot report its own death. Defined so logs and
@@ -64,6 +71,7 @@ STATE_NAMES = {
     STATE_IDLE: "idle",
     STATE_CONNECTED: "connected",
     STATE_APPROACH_CORNER: "approaching corner",
+    STATE_ANOMALY: "braking anomaly",
     STATE_ERROR: "error (MCU-raised)",
 }
 
