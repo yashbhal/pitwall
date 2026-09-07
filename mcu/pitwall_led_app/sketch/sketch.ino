@@ -9,8 +9,9 @@
 //   Side RGB LED 3 -- session status you check before/after a stint
 //                     (idle, connected, error). Small and peripheral, which is
 //                     fine for status. Driven blue only; no colour coding.
-//   8x13 matrix    -- reserved exclusively for in-the-moment driving cues
-//                     (states 2-6, not yet implemented).
+//   8x13 matrix    -- reserved exclusively for in-the-moment driving cues.
+//                     State 2 (approaching focus corner) is implemented;
+//                     states 3-6 are not.
 //
 // Colour carries no meaning anywhere in this design. The matrix is MONOCHROME
 // BLUE (UNO Q datasheet ABX00162) and states are encoded as glyph shape, flash
@@ -30,11 +31,13 @@ static const char *BRIDGE_METHOD = "pitwall_led_state";
 
 static const int STATE_IDLE = 0;       // nothing being recorded: LED off
 static const int STATE_CONNECTED = 1;  // logging normally: LED steady on
+static const int STATE_APPROACH = 2;   // approaching focus corner: matrix pulse
 static const int STATE_ERROR = 7;      // connection lost: LED fast alternating
 
-// Codes 2-6 are matrix driving cues (see mcu/bridge_protocol.md). They are not
-// implemented yet, but receiving one already proves Linux is alive, so they are
-// treated as "connected" on the status LED rather than as unknown.
+// Codes 2-6 are matrix driving cues (see mcu/bridge_protocol.md); 3-6 are not
+// implemented yet. Every one of them proves Linux is alive, so all are treated
+// as "connected" on the status LED rather than as unknown. State 2 must not
+// disturb the status LED: being in a corner-approach zone is still connected.
 
 // Linux re-sends the current state as a heartbeat. Silence past this means the
 // Linux side died, which is exactly STATE_ERROR -- Linux cannot report its own
@@ -47,6 +50,16 @@ static const unsigned long STATE_TIMEOUT_MS = 3000;
 static const unsigned long ERROR_FLASH_INTERVAL_MS = 80;
 
 static const unsigned long RENDER_INTERVAL_MS = 10;
+
+// State 2's rhythm: one dim-bright-dim cycle per period, deliberately the
+// slowest thing on the board so it reads as ambient information in peripheral
+// vision rather than as an alarm. Nothing may approach ERROR_FLASH_INTERVAL_MS.
+static const unsigned long APPROACH_PULSE_PERIOD_MS = 1600;
+
+// Never fully dark at the bottom of the pulse: a cue that reaches zero is
+// indistinguishable from the cue having ended.
+static const uint8_t APPROACH_MIN_BRIGHTNESS = 20;
+static const uint8_t APPROACH_MAX_BRIGHTNESS = 255;
 
 static const uint8_t MATRIX_ROWS = 8;
 static const uint8_t MATRIX_COLS = 13;
@@ -63,6 +76,7 @@ static volatile unsigned long g_stateReceivedAt = 0;
 static volatile bool g_everHeardFromLinux = false;
 
 static int g_loggedState = -1;  // -1 forces the first log line
+static bool g_matrixLit = false;  // avoids re-pushing a blank frame every pass
 
 static void setStatusLed(bool on) {
   digitalWrite(STATUS_LED_PIN, on ? LOW : HIGH);
@@ -72,6 +86,61 @@ static void drawBlank() {
   uint8_t frame[MATRIX_PIXELS];
   memset(frame, 0, sizeof(frame));
   matrix.draw(frame);
+}
+
+// Filled triangle pointing up: single-pixel apex on the top row widening to the
+// full width on the bottom row. Chosen for state 2 because a solid mass reads at
+// a glance and shares no shape with any other planned cue.
+//
+// Assumes the flat frame array is row-major with MATRIX_COLS per row, which is
+// how drawBlank() has always addressed it. If the layout is actually
+// column-major the glyph appears rotated -- the one thing worth eyeballing the
+// first time this runs on hardware.
+static bool triangleUpPixel(uint8_t row, uint8_t col) {
+  const int centre = MATRIX_COLS / 2;             // 6
+  const int halfWidth = (row * centre) / (MATRIX_ROWS - 1);
+  const int offset = (int)col - centre;
+  return (offset >= -halfWidth) && (offset <= halfWidth);
+}
+
+static void drawTriangleUp(uint8_t brightness) {
+  uint8_t frame[MATRIX_PIXELS];
+  for (uint8_t row = 0; row < MATRIX_ROWS; row++) {
+    for (uint8_t col = 0; col < MATRIX_COLS; col++) {
+      frame[row * MATRIX_COLS + col] =
+          triangleUpPixel(row, col) ? brightness : 0;
+    }
+  }
+  matrix.draw(frame);
+}
+
+// Symmetric triangle wave, so the fade up and the fade down take equal time and
+// the pulse has no visible "snap" back to dim. Derived from millis() alone, so
+// no phase state has to be kept or reset between states.
+static uint8_t pulseBrightness(unsigned long now) {
+  const unsigned long half = APPROACH_PULSE_PERIOD_MS / 2;
+  unsigned long phase = now % APPROACH_PULSE_PERIOD_MS;
+  if (phase >= half) {
+    phase = APPROACH_PULSE_PERIOD_MS - phase;  // descending half
+  }
+
+  const unsigned long span = APPROACH_MAX_BRIGHTNESS - APPROACH_MIN_BRIGHTNESS;
+  return (uint8_t)(APPROACH_MIN_BRIGHTNESS + (phase * span) / half);
+}
+
+static void renderMatrix(int state, unsigned long now) {
+  if (state == STATE_APPROACH) {
+    drawTriangleUp(pulseBrightness(now));
+    g_matrixLit = true;
+    return;
+  }
+
+  // Every other state keeps the matrix dark, so an illuminated matrix always
+  // means something is happening right now.
+  if (g_matrixLit) {
+    drawBlank();
+    g_matrixLit = false;
+  }
 }
 
 // Bridge callback. Returns the code it accepted so the Linux side can confirm
@@ -124,6 +193,10 @@ static void logStateChange(int state) {
     case STATE_CONNECTED:
       Monitor.println("state 1: connected, logging (status LED steady)");
       break;
+    case STATE_APPROACH:
+      Monitor.println(
+          "state 2: approaching focus corner (triangle pulse, LED still steady)");
+      break;
     case STATE_ERROR:
       Monitor.println("state 7: connection lost (status LED fast flash)");
       break;
@@ -144,11 +217,13 @@ void setup() {
   digitalWrite(LED3_G, HIGH);
   setStatusLed(false);
 
-  // The matrix is reserved for driving cues (states 2-6) and stays blank until
-  // the first of those is implemented.
+  // The matrix is reserved for driving cues and is dark whenever none is
+  // active. 8-bit grayscale is what makes state 2's fade smooth rather than a
+  // two-level blink.
   matrix.begin();
   matrix.setGrayscaleBits(8);
   drawBlank();
+  g_matrixLit = false;
 
   Bridge.begin();
   Monitor.begin();
@@ -171,6 +246,7 @@ void loop() {
   }
 
   renderStatusLed(state, now);
+  renderMatrix(state, now);
 
   delay(RENDER_INTERVAL_MS);
 }

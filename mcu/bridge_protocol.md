@@ -66,7 +66,7 @@ illuminated matrix always means "something just happened".
 
 ## State table
 
-Codes 2-6 are the proposed vocabulary and are **not implemented**. The fastest
+Codes 3-6 are the proposed vocabulary and are **not implemented**. The fastest
 rhythm is reserved exclusively for the error state, so urgency reads through
 speed alone.
 
@@ -74,12 +74,17 @@ speed alone.
 |---|---|---|---|---|---|
 | 0 | Idle / not recording | side LED | — | off | implemented |
 | 1 | Connected, logging normally | side LED | — | steady on | implemented |
-| 2 | Approaching focus corner | matrix | filled triangle pointing up | slow pulse, dim-bright-dim | proposed |
+| 2 | Approaching focus corner | matrix | filled triangle pointing up | slow pulse, dim-bright-dim | implemented |
 | 3 | Brake reapplication event | matrix | X (diagonal cross) | fast sharp flash, 2-3 blinks then stop | proposed |
 | 4 | Manual upshift cue (optional) | matrix | upward arrow / chevron | single quick blink | proposed |
 | 5 | Edge Impulse anomaly | matrix | filled circle, centred | slow fade in/out | proposed |
 | 6 | Lap complete / session update | matrix | full-width horizontal bar | sweeps across once, then off | proposed |
 | 7 | Error / connection lost | side LED | — | fast alternating flash, 80 ms, reserved | implemented |
+
+State 2's pulse is a symmetric triangle wave over `APPROACH_PULSE_PERIOD_MS`
+(1600 ms), between brightness 20 and 255. It is deliberately the slowest rhythm
+on the board, and it never reaches zero: a cue that goes fully dark is
+indistinguishable from the cue having ended.
 
 Distinguishability check: no two matrix cues share both a glyph and a rhythm.
 The three most consequential distinctions are also the sharpest -- state 3 (X,
@@ -91,6 +96,56 @@ Code 0 is an addition to the plan's table. Without it there is no honest way to
 show "not recording", and the LED would keep claiming "connected" after a
 session ends.
 
+## How "approaching a focus corner" is determined
+
+State 2 is the first state that needs to know where the car is *right now*, not
+whether telemetry is arriving. `src/corner_approach.py` provides both halves:
+
+`LapDistanceTail` tails the same growing CSV that drives states 0 and 1, reading
+only the bytes appended since the previous poll and scanning them newest-first
+for a `packet_id == 2` row's `lap_distance`. `CornerApproachMonitor` checks that
+against the zones in `config/monza.py`, loaded through
+`config.loader.load_track_config()` — the same calibrated boundaries the
+post-session analysis uses, so the live cue and the report cannot disagree about
+where a corner is. `bridge_client.py` wires them together and only consults them
+while the recording is fresh, so a stale session cannot cue a corner.
+
+Three rules turn zone containment into something usable, all tuned in
+`config/led_feedback.yaml`:
+
+- **Hysteresis** (`corner_approach_hysteresis_m`, 25 m). Leaving requires
+  travelling past the boundary by that margin, so a distance value that jitters
+  across the edge cannot toggle the matrix.
+- **Direction.** A cue arms only on a crossing into the zone from *before* its
+  start. Arriving from the far end means the car went backwards.
+  `data/raw/2026-07-28_025428_session.csv` contains that on lap 4 — a block of
+  duplicated rows rewinds `lap_distance` from ~2230 m to ~2153 m, inside Roggia —
+  and it produced a second Roggia cue in one lap until this rule existed.
+- **Rate limiting** (`corner_cue_min_interval_ms`, 20 s), which is plan section
+  13's "a single corner cannot produce repeated distracting flashes". It covers
+  the case direction cannot: a flashback that rewinds far enough to re-approach
+  the same corner legitimately within seconds.
+
+`corner_cue_max_duration_ms` (14 s) cancels a cue that outlives any real pass,
+which means stopped, spun or crawling inside the zone rather than approaching it.
+Measured across all five recordings in `data/raw/`, a real pass through the
+widened band takes 4.3-7.8 s at Turn 1 and 6.6-10.8 s at Roggia. **It must stay
+above ~11 s and below `corner_cue_min_interval_ms`.** At 6 s it silently cut
+normal cues short part-way through the corner; `tests/simulate_live_led.py`
+caught that, and `tests/test_corner_approach.py` now pins both bounds.
+
+Two consequences worth knowing:
+
+- Latency is bounded by `session_logger.py`'s flush every 50 rows, not by
+  `led_state_poll_interval_ms`. The file grows in ~1.2 s bursts, so the cue
+  typically lights 30-70 m into the zone rather than exactly at its edge. For the
+  same reason the tail *retains* its last distance for
+  `telemetry_stale_after_ms`; without that the cue would drop out between
+  flushes.
+- Both Monza zones currently cue, not just one "focus" corner. Roggia's zone is
+  550 m long, so its cue runs 8-10 s, which is long for a driving cue. Narrowing
+  it is a zone-calibration decision, not an LED one.
+
 ### Codes 2-6 imply "connected"
 
 The protocol carries one code at a time, but "connected" and "approaching a
@@ -99,7 +154,9 @@ MCU treats codes 2-6 as implying connected and holds the status LED steady while
 rendering the matrix cue. Receiving a cue is itself proof that Linux is alive.
 
 So Linux sends e.g. `2` on approach and reverts to `1` afterwards; the status LED
-never flickers across that transition.
+never flickers across that transition. In the sketch this is not special-cased:
+`renderStatusLed()`'s `default:` branch already holds the LED steady for any code
+that is not idle or error.
 
 An unknown code (anything outside 0-7) holds the status LED steady and logs a
 warning, rather than being silently ignored, so a protocol mismatch is visible.
@@ -182,4 +239,20 @@ connected and idle during a healthy session.
   the library manager.
 - `loop()` renders every pass from `millis()` rather than only on state change,
   which state 7's flash already requires. The matrix cues in states 2-6 can
-  therefore be added as glyph plus phase functions without restructuring.
+  therefore be added as glyph plus phase functions without restructuring. State 2
+  confirmed this: it needed only `triangleUpPixel()`, `drawTriangleUp()`,
+  `pulseBrightness()` and one `renderMatrix()` call in `loop()`.
+- `drawTriangleUp()` assumes the flat 104-byte frame is **row-major with 13
+  columns per row**, which is how `drawBlank()` has always addressed it but which
+  nothing in the repo verifies. If the layout is column-major the glyph appears
+  rotated. This is the one thing to eyeball the first time state 2 runs on
+  hardware; only the glyph is affected, not the state machine.
+- The matrix is blanked once on leaving state 2 rather than every pass, so an
+  unchanged dark matrix costs no Bridge or SPI traffic.
+- `tests/test_sketch_glyph.py` extracts `triangleUpPixel()` and
+  `pulseBrightness()` from this .ino by name, compiles them with `g++ -Werror`
+  and checks the glyph shape and the pulse's integer arithmetic. That is also
+  what keeps the terminal preview in `tests/simulate_live_led.py` honest, since
+  it reimplements both in Python. It skips itself where `g++` is absent, and it
+  is not a substitute for compiling the sketch: the UNO Q core is usually not
+  installed on a development laptop.
