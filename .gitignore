@@ -29,6 +29,10 @@ data/processed/*.json
 data/sessions/*.csv
 data/sessions/*.json
 data/sessions/*.db
+data/*
+
+# Scratch replay written by tests/simulate_live_led.py
+data/sessions/led_sim/
 
 # Edge Impulse build artifacts
 edge_impulse/build/
