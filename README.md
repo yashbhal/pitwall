@@ -118,3 +118,47 @@ scripts/      board side deployment helper
 Tuning values live in `config/`, never in the analysis code. Corner boundaries in
 `config/monza.py` were calibrated from real driving data, and the comments there
 record which session and lap each number came from.
+
+## Open source credits
+
+PitWall is deliberately light on dependencies. The telemetry capture, analysis
+and coaching code uses only the Python standard library, which is also why
+`config/loader.py` parses its own flat YAML instead of pulling in PyYAML: the
+board does not need an extra package installed.
+
+Everything outside the standard library:
+
+**Python**
+
+- [Flask](https://flask.palletsprojects.com/) by the Pallets team, BSD 3-Clause.
+  Serves the session report pages. It brings in Werkzeug, Jinja2, MarkupSafe,
+  itsdangerous and Click, all BSD 3-Clause, plus Blinker under MIT.
+- [edge-impulse-linux](https://github.com/edgeimpulse/linux-sdk-python) by Edge
+  Impulse, BSD 3-Clause Clear. Runs the trained anomaly model on the board.
+
+**Arduino UNO Q**
+
+- [Arduino_RouterBridge](https://github.com/arduino-libraries/Arduino_RouterBridge)
+  by Arduino SA, MPL-2.0. Carries the LED state code from Linux to the STM32.
+- Arduino_LED_Matrix, which ships with the
+  [Arduino core for Zephyr](https://github.com/arduino/ArduinoCore-zephyr) and
+  drives the 8x13 matrix. The core is built on
+  [Zephyr RTOS](https://zephyrproject.org/), Apache-2.0.
+- Arduino App Lab and its `arduino.app_utils` package, which provide the
+  container the LED app runs inside.
+- MsgPack, ArxContainer, ArxTypeTraits and DebugLog by Hideaki Tai, MIT. These
+  are pulled in as build dependencies of the Bridge library rather than used
+  directly.
+
+**Tooling**
+
+- [Edge Impulse](https://edgeimpulse.com/) was used to train and deploy the
+  anomaly model. The platform is a hosted service, not open source, but the
+  runtime SDK above is.
+- `tests/test_sketch_glyph.py` compiles the sketch's glyph maths with
+  [GCC](https://gcc.gnu.org/), GPL-3.0 with the runtime library exception, if
+  `g++` is available. The test skips itself if it is not.
+
+The telemetry format follows the F1 25 UDP specification published by EA and
+Codemasters. That document is a reference, not open source software, and a copy
+is kept in `docs/` for offline use.
